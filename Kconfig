@@ -1,0 +1,5 @@
+
+menu "Pin Controllers"
+source addons/drivers/pinctrl/Kconfig
+endmenu
+

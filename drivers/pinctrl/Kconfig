@@ -1,0 +1,11 @@
+#
+# C-SKY Pin control drivers
+#
+
+config PINCTRL_ERAGON
+	bool "C-SKY Eragon SoC pinctrl driver"
+	depends on OF
+	select PINCTRL
+	select PINMUX
+	select PINCONF
+
