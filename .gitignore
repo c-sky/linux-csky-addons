@@ -1,0 +1,8 @@
+*.a
+*.o
+*.o.cmd
+*.builtin
+*.order
+*.swp
+*.gitignore
+output
