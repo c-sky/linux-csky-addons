@@ -1,7 +1,8 @@
 /*
  * pin-controller/pin-mux/pin-config/gpio-driver for C-SKY's SoCs.
  *
- * Copyright (C) 2017 Lu Chongzhi <chongzhi_lu@c-sky.com>.
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ * Author: Charles Lu <chongzhi_lu@c-sky.com>
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -18,6 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
+#include <linux/gpio.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/pinctrl/machine.h>
@@ -25,35 +27,1596 @@
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/pinconf-generic.h>
-#include <linux/clk.h>
+#include <linux/irqchip/chained_irq.h>
 #include <linux/regmap.h>
+#include <linux/mfd/syscon.h>
+//#include <dt-bindings/pinctrl/csky.h>
 
-extern void eragon_pinctrl_init(void);
+#include "../../../drivers/pinctrl/core.h"
+#include "../../../drivers/pinctrl/pinconf.h"
 
-static int csky_pinctrl_probe(struct platform_device *pdev)
+#include "pinctrl-csky.h"
+
+
+/* GPIO control registers */
+#define GPIO_SWPORT_DR		0x00
+#define GPIO_SWPORT_DDR		0x04
+#define GPIO_INTEN		0x30
+#define GPIO_INTMASK		0x34
+#define GPIO_INTTYPE_LEVEL	0x38
+#define GPIO_INT_POLARITY	0x3c
+#define GPIO_INT_STATUS		0x40
+#define GPIO_INT_RAWSTATUS	0x44
+#define GPIO_DEBOUNCE		0x48
+#define GPIO_PORTS_EOI		0x4c
+#define GPIO_EXT_PORT		0x50
+#define GPIO_LS_SYNC		0x60
+
+enum csky_pinctrl_type {
+	ERAGON,
+};
+
+/**
+ * Encode variants of iomux registers into a type variable
+ */
+#define IOMUX_GPIO_ONLY		BIT(0)
+#define IOMUX_WIDTH_4BIT	BIT(1)
+#define IOMUX_SOURCE_PMU	BIT(2)
+#define IOMUX_UNROUTED		BIT(3)
+
+/**
+ * @type: iomux variant using IOMUX_* constants
+ * @offset: if initialized to -1 it will be autocalculated, by specifying
+ *	    an initial offset value the relevant source offset can be reset
+ *	    to a new value for autocalculating the following iomux registers.
+ */
+struct csky_iomux {
+	int	type;
+	int	offset;
+};
+
+/**
+ * enum type index corresponding to csky_perpin_drv_list arrays index.
+ */
+enum csky_pin_drv_type {
+	DRV_TYPE_IO_DEFAULT = 0,
+	DRV_TYPE_IO_1V8_OR_3V0,
+	DRV_TYPE_IO_1V8_ONLY,
+	DRV_TYPE_IO_1V8_3V0_AUTO,
+	DRV_TYPE_IO_3V3_ONLY,
+	DRV_TYPE_MAX
+};
+
+/**
+ * enum type index corresponding to csky_pull_list arrays index.
+ */
+enum csky_pin_pull_type {
+	PULL_TYPE_IO_DEFAULT = 0,
+	PULL_TYPE_IO_1V8_ONLY,
+	PULL_TYPE_MAX
+};
+
+/**
+ * @drv_type: drive strength variant using csky_perpin_drv_type
+ * @offset: if initialized to -1 it will be autocalculated, by specifying
+ *	    an initial offset value the relevant source offset can be reset
+ *	    to a new value for autocalculating the following drive strength
+ *	    registers. if used chips own cal_drv func instead to calculate
+ *	    registers offset, the variant could be ignored.
+ */
+struct csky_drv {
+	enum csky_pin_drv_type	drv_type;
+	int			offset;
+};
+
+/**
+ * @reg_base: register base of the gpio bank
+ * @reg_pull: optional separate register for additional pull settings
+ * @irq: interrupt of the gpio bank
+ * @saved_masks: Saved content of GPIO_INTEN at suspend time.
+ * @pin_base: first pin number
+ * @nr_pins: number of pins in this bank
+ * @name: name of the bank
+ * @bank_num: number of the bank, to account for holes
+ * @iomux: array describing the 4 iomux sources of the bank
+ * @drv: array describing the 4 drive strength sources of the bank
+ * @pull_type: array describing the 4 pull type sources of the bank
+ * @valid: are all necessary informations present
+ * @of_node: dt node of this bank
+ * @drvdata: common pinctrl basedata
+ * @domain: irqdomain of the gpio bank
+ * @gpio_chip: gpiolib chip
+ * @grange: gpio range
+ * @slock: spinlock for the gpio bank
+ */
+struct csky_pin_bank {
+	void __iomem			*reg_base;
+	struct regmap			*regmap_pull;
+	int				irq;
+	u32				saved_masks;
+	u32				pin_base;
+	u8				nr_pins;
+	char				*name;
+	u8				bank_num;
+//	struct csky_iomux		iomux[4];
+//	struct csky_drv			drv[4];
+	enum csky_pin_pull_type		pull_type[4];
+	bool				valid;
+	struct device_node		*of_node;
+	struct csky_pinctrl		*drvdata;
+	struct irq_domain		*domain;
+	struct gpio_chip		gpio_chip;
+	struct pinctrl_gpio_range	grange;
+	spinlock_t			slock;
+	u32				toggle_edge_mode;
+};
+
+#define PIN_BANK(id, pins, label)		\
+	{					\
+		.bank_num	= id,		\
+		.nr_pins	= pins,		\
+		.name		= label,	\
+	}
+
+/**
+ */
+struct csky_pin_ctrl {
+	struct csky_pin_bank	*pin_banks;
+	u32			nr_banks;
+	u32			nr_pins;
+	char			*label;
+	enum csky_pinctrl_type	type;
+	u32			mux_regs[4];
+//	int			grf_mux_offset;
+//	int			pmu_mux_offset;
+//	int			grf_drv_offset;
+//	int			pmu_drv_offset;
+
+//	void	(*pull_calc_reg)(struct csky_pin_bank *bank,
+//				 int pin_num, struct regmap **regmap,
+//				 int *reg, u8 *bit);
+//	void	(*drv_calc_reg)(struct csky_pin_bank *bank,
+//				int pin_num, struct regmap **regmap,
+//				int *reg, u8 *bit);
+};
+
+struct csky_pin_config {
+	unsigned int		func;
+	unsigned long		*configs;
+	unsigned int		nconfigs;
+};
+
+/**
+ * struct csky_pin_group: represent group of pins of a pinmux function.
+ * @name: name of the pin group, used to lookup the group.
+ * @pins: the pins included in this group.
+ * @npins: number of pins included in this group.
+ * @func: the mux function number to be programmed when selected.
+ * @configs: the config values to be set for each pin
+ * @nconfigs: number of configs for each pin
+ */
+struct csky_pin_group {
+	const char		*name;
+	unsigned int		npins;
+	unsigned int		*pins;
+	struct csky_pin_config	*data;
+};
+
+/**
+ * struct csky_pmx_func: represent a pin function.
+ * @name: name of the pin function, used to lookup the function.
+ * @groups: one or more names of pin groups that provide this function.
+ * @num_groups: number of groups included in @groups.
+ */
+struct csky_pmx_func {
+	const char		*name;
+	const char		**groups;
+	u8			ngroups;
+};
+
+struct csky_pinctrl {
+	struct device		*dev;
+	struct csky_pin_ctrl	*ctrl;
+	struct pinctrl_desc	pctl;
+	struct pinctrl_dev	*pctl_dev;
+	struct csky_pin_group	*groups;
+	unsigned int		ngroups;
+	struct csky_pmx_func	*functions;
+	unsigned int		nfunctions;
+};
+
+static inline const struct csky_pin_group *pinctrl_name_to_group(
+					const struct csky_pinctrl *info,
+					const char *name)
 {
-	// eragon_pinctrl_init();
-	pr_info("csky_pinctrl_probe\n");
+	int i;
+
+	for (i = 0; i < info->ngroups; i++) {
+		if (!strcmp(info->groups[i].name, name))
+			return &info->groups[i];
+	}
+
+	return NULL;
+}
+
+/*
+ * given a pin number that is local to a pin controller, find out the pin bank
+ * and the register base of the pin bank.
+ */
+static struct csky_pin_bank *pin_to_bank(struct csky_pinctrl *info,
+					 unsigned pin)
+{
+	struct csky_pin_bank *b = info->ctrl->pin_banks;
+
+	while (pin >= (b->pin_base + b->nr_pins))
+		b++;
+
+	return b;
+}
+
+static struct csky_pin_bank *bank_num_to_bank(struct csky_pinctrl *info,
+					      unsigned num)
+{
+	struct csky_pin_bank *b = info->ctrl->pin_banks;
+	int i;
+
+	for (i = 0; i < info->ctrl->nr_banks; i++, b++) {
+		if (b->bank_num == num)
+			return b;
+	}
+
+	return ERR_PTR(-EINVAL);
+}
+
+/*
+ * Pinctrl_ops handling
+ */
+
+static int csky_get_groups_count(struct pinctrl_dev *pctldev)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	return info->ngroups;
+}
+
+static const char *csky_get_group_name(struct pinctrl_dev *pctldev,
+				       unsigned selector)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	return info->groups[selector].name;
+}
+
+static int csky_get_group_pins(struct pinctrl_dev *pctldev,
+			       unsigned selector,
+			       const unsigned **pins,
+			       unsigned *npins)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	if (selector >= info->ngroups)
+		return -EINVAL;
+
+	*pins = info->groups[selector].pins;
+	*npins = info->groups[selector].npins;
+
 	return 0;
 }
 
+static int csky_dt_node_to_map(struct pinctrl_dev *pctldev,
+			       struct device_node *np,
+			       struct pinctrl_map **map, unsigned *num_maps)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+	const struct csky_pin_group *grp;
+	struct pinctrl_map *new_map;
+	struct device_node *parent;
+	int map_num = 1;
+	int i;
+
+	/*
+	 * first find the group of this node and check if we need to create
+	 * config maps for pins
+	 */
+	grp = pinctrl_name_to_group(info, np->name);
+	if (!grp) {
+		dev_err(info->dev, "unable to find group for node %s\n",
+			np->name);
+		return -EINVAL;
+	}
+
+	map_num += grp->npins;
+	new_map = devm_kzalloc(pctldev->dev, sizeof(*new_map) * map_num,
+				GFP_KERNEL);
+	if (!new_map)
+		return -ENOMEM;
+
+	*map = new_map;
+	*num_maps = map_num;
+
+	/* create mux map */
+	parent = of_get_parent(np);
+	if (!parent) {
+		devm_kfree(pctldev->dev, new_map);
+		return -EINVAL;
+	}
+	new_map[0].type = PIN_MAP_TYPE_MUX_GROUP;
+	new_map[0].data.mux.function = parent->name;
+	new_map[0].data.mux.group = np->name;
+	of_node_put(parent);
+
+	/* create config map */
+	new_map++;
+	for (i = 0; i < grp->npins; i++) {
+		new_map[i].type = PIN_MAP_TYPE_CONFIGS_PIN;
+		new_map[i].data.configs.group_or_pin =
+				pin_get_name(pctldev, grp->pins[i]);
+		new_map[i].data.configs.configs = grp->data[i].configs;
+		new_map[i].data.configs.num_configs = grp->data[i].nconfigs;
+	}
+
+	dev_dbg(pctldev->dev, "maps: function %s group %s num %d\n",
+		(*map)->data.mux.function, (*map)->data.mux.group, map_num);
+
+	return 0;
+}
+
+static void csky_dt_free_map(struct pinctrl_dev *pctldev,
+			     struct pinctrl_map *map, unsigned num_maps)
+{
+}
+
+static const struct pinctrl_ops csky_pctrl_ops = {
+	.get_groups_count	= csky_get_groups_count,
+	.get_group_name		= csky_get_group_name,
+	.get_group_pins		= csky_get_group_pins,
+	.dt_node_to_map		= csky_dt_node_to_map,
+	.dt_free_map		= csky_dt_free_map,
+};
+
+/*
+ * Hardware access
+ */
+
+static int csky_get_mux(struct csky_pin_bank *bank, int pin)
+{
+	return 0;
+}
+
+/*
+ * Set a new mux function for a pin.
+ *
+ * The register is divided into the upper and lower 16 bit. When changing
+ * a value, the previous register value is not read and changed. Instead
+ * it seems the changed bits are marked in the upper 16 bit, while the
+ * changed value gets set in the same offset in the lower 16 bit.
+ * All pin settings seem to be 2 bit wide in both the upper and lower
+ * parts.
+ * @bank: pin bank to change
+ * @pin: pin to change
+ * @mux: new mux function to set
+ */
+static int csky_set_mux(struct csky_pin_bank *bank, int pin, int mux)
+{
+	return 0;
+}
+
+#define ERAGON_PULL_OFFSET		0x164
+#define ERAGON_PULL_BITS_PER_PIN	2
+#define ERAGON_PULL_PINS_PER_REG	8
+#define ERAGON_PULL_BANK_STRIDE		16
+#define ERAGON_PULL_PMU_OFFSET		0x64
+
+static void eragon_calc_pull_reg_and_bit(struct csky_pin_bank *bank,
+					 int pin_num, struct regmap **regmap,
+					 int *reg, u8 *bit)
+{
+	//struct csky_pinctrl *info = bank->drvdata;
+}
+
+#if 0
+static int csky_perpin_drv_list[DRV_TYPE_MAX][8] = {
+	{ 2, 4, 8, 12, -1, -1, -1, -1 },
+	{ 3, 6, 9, 12, -1, -1, -1, -1 },
+	{ 5, 10, 15, 20, -1, -1, -1, -1 },
+	{ 4, 6, 8, 10, 12, 14, 16, 18 },
+	{ 4, 7, 10, 13, 16, 19, 22, 26 }
+};
+#endif
+static int csky_get_drive_perpin(struct csky_pin_bank *bank,
+				 int pin_num)
+{
+	return 0;
+}
+
+static int csky_set_drive_perpin(struct csky_pin_bank *bank,
+				 int pin_num, int strength)
+{
+	return 0;
+}
+
+static int csky_pull_list[PULL_TYPE_MAX][4] = {
+	{
+		PIN_CONFIG_BIAS_DISABLE,
+		PIN_CONFIG_BIAS_PULL_UP,
+		PIN_CONFIG_BIAS_PULL_DOWN,
+		PIN_CONFIG_BIAS_BUS_HOLD
+	},
+	{
+		PIN_CONFIG_BIAS_DISABLE,
+		PIN_CONFIG_BIAS_PULL_DOWN,
+		PIN_CONFIG_BIAS_DISABLE,
+		PIN_CONFIG_BIAS_PULL_UP
+	},
+};
+
+static int csky_get_pull(struct csky_pin_bank *bank, int pin_num)
+{
+	struct csky_pinctrl *info = bank->drvdata;
+	struct csky_pin_ctrl *ctrl = info->ctrl;
+	struct regmap *regmap;
+	int reg, ret, pull_type;
+	u8 bit;
+	u32 data;
+
+	//ctrl->pull_calc_reg(bank, pin_num, &regmap, &reg, &bit);
+
+	ret = regmap_read(regmap, reg, &data);
+	if (ret)
+		return ret;
+
+	switch (ctrl->type) {
+	case ERAGON:
+		pull_type = bank->pull_type[pin_num / 8];
+		data >>= bit;
+		data &= (1 << ERAGON_PULL_BITS_PER_PIN) - 1;
+
+		return csky_pull_list[pull_type][data];
+	default:
+		dev_err(info->dev, "unsupported pinctrl type\n");
+		return -EINVAL;
+	};
+}
+
+static int csky_set_pull(struct csky_pin_bank *bank,
+			 int pin_num, int pull)
+{
+	struct csky_pinctrl *info = bank->drvdata;
+	struct csky_pin_ctrl *ctrl = info->ctrl;
+	struct regmap *regmap;
+	int reg, ret, i, pull_type;
+	unsigned long flags;
+	u8 bit;
+	u32 data, rmask;
+
+	dev_dbg(info->dev, "setting pull of GPIO%d-%d to %d\n",
+		bank->bank_num, pin_num, pull);
+
+	//ctrl->pull_calc_reg(bank, pin_num, &regmap, &reg, &bit);
+
+	switch (ctrl->type) {
+	case ERAGON:
+		pull_type = bank->pull_type[pin_num / 8];
+		ret = -EINVAL;
+		for (i = 0; i < ARRAY_SIZE(csky_pull_list[pull_type]);
+			i++) {
+			if (csky_pull_list[pull_type][i] == pull) {
+				ret = i;
+				break;
+			}
+		}
+
+		if (ret < 0) {
+			dev_err(info->dev, "unsupported pull setting %d\n",
+				pull);
+			return ret;
+		}
+
+		spin_lock_irqsave(&bank->slock, flags);
+
+		/* enable the write to the equivalent lower bits */
+		data = ((1 << ERAGON_PULL_BITS_PER_PIN) - 1) << (bit + 16);
+		rmask = data | (data >> 16);
+		data |= (ret << bit);
+
+		ret = regmap_update_bits(regmap, reg, rmask, data);
+
+		spin_unlock_irqrestore(&bank->slock, flags);
+		break;
+	default:
+		dev_err(info->dev, "unsupported pinctrl type\n");
+		return -EINVAL;
+	}
+
+	return ret;
+}
+
+/*
+ * Pinmux_ops handling
+ */
+
+static int csky_pmx_get_funcs_count(struct pinctrl_dev *pctldev)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	return info->nfunctions;
+}
+
+static const char *csky_pmx_get_func_name(struct pinctrl_dev *pctldev,
+					  unsigned selector)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	return info->functions[selector].name;
+}
+
+static int csky_pmx_get_groups(struct pinctrl_dev *pctldev,
+			       unsigned selector, const char * const **groups,
+			       unsigned * const num_groups)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+
+	*groups = info->functions[selector].groups;
+	*num_groups = info->functions[selector].ngroups;
+
+	return 0;
+}
+
+static int csky_pmx_set(struct pinctrl_dev *pctldev, unsigned selector,
+			unsigned group)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+	const unsigned int *pins = info->groups[group].pins;
+	const struct csky_pin_config *data = info->groups[group].data;
+	struct csky_pin_bank *bank;
+	int cnt, ret = 0;
+
+	dev_dbg(info->dev, "enable function %s group %s\n",
+		info->functions[selector].name, info->groups[group].name);
+
+	/*
+	 * for each pin in the pin group selected, program the correspoding pin
+	 * pin function number in the config register.
+	 */
+	for (cnt = 0; cnt < info->groups[group].npins; cnt++) {
+		bank = pin_to_bank(info, pins[cnt]);
+		ret = csky_set_mux(bank, pins[cnt] - bank->pin_base,
+				   data[cnt].func);
+		if (ret)
+			break;
+	}
+
+	if (ret) {
+		/* revert the already done pin settings */
+		for (cnt--; cnt >= 0; cnt--)
+			csky_set_mux(bank, pins[cnt] - bank->pin_base, 0);
+
+		return ret;
+	}
+
+	return 0;
+}
+
+static int csky_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
+{
+	struct csky_pin_bank *bank = gpiochip_get_data(chip);
+	u32 data;
+
+	data = readl_relaxed(bank->reg_base + GPIO_SWPORT_DDR);
+
+	return !(data & BIT(offset));
+}
+
+/*
+ * The calls to gpio_direction_output() and gpio_direction_input()
+ * leads to this function call (via the pinctrl_gpio_direction_{input|output}()
+ * function called from the gpiolib interface).
+ */
+static int _csky_pmx_gpio_set_direction(struct gpio_chip *chip,
+					int pin, bool input)
+{
+	struct csky_pin_bank *bank;
+	int ret;
+	unsigned long flags;
+	u32 data;
+
+	bank = gpiochip_get_data(chip);
+
+	ret = csky_set_mux(bank, pin, CSKY_FUNC_GPIO);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&bank->slock, flags);
+
+	data = readl_relaxed(bank->reg_base + GPIO_SWPORT_DDR);
+	/* set bit to 1 for output, 0 for input */
+	if (!input)
+		data |= BIT(pin);
+	else
+		data &= ~BIT(pin);
+	writel_relaxed(data, bank->reg_base + GPIO_SWPORT_DDR);
+
+	spin_unlock_irqrestore(&bank->slock, flags);
+
+	return 0;
+}
+
+static int csky_pmx_gpio_set_direction(struct pinctrl_dev *pctldev,
+				       struct pinctrl_gpio_range *range,
+				       unsigned offset, bool input)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+	struct gpio_chip *chip;
+	int pin;
+
+	chip = range->gc;
+	pin = offset - chip->base;
+	dev_dbg(info->dev, "gpio_direction for pin %u as %s-%d to %s\n",
+		 offset, range->name, pin, input ? "input" : "output");
+
+	return _csky_pmx_gpio_set_direction(chip, offset - chip->base,
+						input);
+}
+
+static const struct pinmux_ops csky_pmx_ops = {
+	.get_functions_count	= csky_pmx_get_funcs_count,
+	.get_function_name	= csky_pmx_get_func_name,
+	.get_function_groups	= csky_pmx_get_groups,
+	.set_mux		= csky_pmx_set,
+	.gpio_set_direction	= csky_pmx_gpio_set_direction,
+};
+
+/*
+ * Pinconf_ops handling
+ */
+
+static bool csky_pinconf_pull_valid(struct csky_pin_ctrl *ctrl,
+				    enum pin_config_param pull)
+{
+	switch (ctrl->type) {
+	case ERAGON:
+		return (pull != PIN_CONFIG_BIAS_PULL_PIN_DEFAULT);
+	}
+
+	return false;
+}
+
+static void csky_gpio_set(struct gpio_chip *gc, unsigned offset, int value);
+static int csky_gpio_get(struct gpio_chip *gc, unsigned offset);
+
+/* set the pin config settings for a specified pin */
+static int csky_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
+			    unsigned long *configs, unsigned num_configs)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+	struct csky_pin_bank *bank = pin_to_bank(info, pin);
+	enum pin_config_param param;
+	u16 arg;
+	int i;
+	int rc;
+
+	for (i = 0; i < num_configs; i++) {
+		param = pinconf_to_config_param(configs[i]);
+		arg = pinconf_to_config_argument(configs[i]);
+
+		switch (param) {
+		case PIN_CONFIG_BIAS_DISABLE:
+			rc =  csky_set_pull(bank, pin - bank->pin_base,
+					    param);
+			if (rc)
+				return rc;
+			break;
+		case PIN_CONFIG_BIAS_PULL_UP:
+		case PIN_CONFIG_BIAS_PULL_DOWN:
+		case PIN_CONFIG_BIAS_PULL_PIN_DEFAULT:
+		case PIN_CONFIG_BIAS_BUS_HOLD:
+			if (!csky_pinconf_pull_valid(info->ctrl, param))
+				return -ENOTSUPP;
+
+			if (!arg)
+				return -EINVAL;
+
+			rc = csky_set_pull(bank, pin - bank->pin_base, param);
+			if (rc)
+				return rc;
+			break;
+		case PIN_CONFIG_OUTPUT:
+			csky_gpio_set(&bank->gpio_chip,
+				      pin - bank->pin_base, arg);
+			rc = _csky_pmx_gpio_set_direction(&bank->gpio_chip,
+				      pin - bank->pin_base, false);
+			if (rc)
+				return rc;
+			break;
+		case PIN_CONFIG_DRIVE_STRENGTH:
+			rc = csky_set_drive_perpin(bank,
+						   pin - bank->pin_base, arg);
+			if (rc < 0)
+				return rc;
+			break;
+		default:
+			return -ENOTSUPP;
+			break;
+		}
+	} /* for each config */
+
+	return 0;
+}
+
+/* get the pin config settings for a specified pin */
+static int csky_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
+			    unsigned long *config)
+{
+	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
+	struct csky_pin_bank *bank = pin_to_bank(info, pin);
+	enum pin_config_param param = pinconf_to_config_param(*config);
+	u16 arg;
+	int rc;
+
+	switch (param) {
+	case PIN_CONFIG_BIAS_DISABLE:
+		if (csky_get_pull(bank, pin - bank->pin_base) != param)
+			return -EINVAL;
+
+		arg = 0;
+		break;
+	case PIN_CONFIG_BIAS_PULL_UP:
+	case PIN_CONFIG_BIAS_PULL_DOWN:
+	case PIN_CONFIG_BIAS_PULL_PIN_DEFAULT:
+	case PIN_CONFIG_BIAS_BUS_HOLD:
+		if (!csky_pinconf_pull_valid(info->ctrl, param))
+			return -ENOTSUPP;
+
+		if (csky_get_pull(bank, pin - bank->pin_base) != param)
+			return -EINVAL;
+
+		arg = 1;
+		break;
+	case PIN_CONFIG_OUTPUT:
+		rc = csky_get_mux(bank, pin - bank->pin_base);
+		if (rc != CSKY_FUNC_GPIO)
+			return -EINVAL;
+
+		rc = csky_gpio_get(&bank->gpio_chip, pin - bank->pin_base);
+		if (rc < 0)
+			return rc;
+
+		arg = rc ? 1 : 0;
+		break;
+	case PIN_CONFIG_DRIVE_STRENGTH:
+		rc = csky_get_drive_perpin(bank, pin - bank->pin_base);
+		if (rc < 0)
+			return rc;
+
+		arg = rc;
+		break;
+	default:
+		return -ENOTSUPP;
+		break;
+	}
+
+	*config = pinconf_to_config_packed(param, arg);
+
+	return 0;
+}
+
+static const struct pinconf_ops csky_pinconf_ops = {
+	.pin_config_get	= csky_pinconf_get,
+	.pin_config_set	= csky_pinconf_set,
+	.is_generic	= true,
+};
+
+static const struct of_device_id csky_bank_match[] = {
+	{ .compatible = "csky,eragon-gpio-bank" },
+	{},
+};
+
+static void csky_pinctrl_child_count(struct csky_pinctrl *info,
+				     struct device_node *np)
+{
+	struct device_node *child;
+
+	for_each_child_of_node(np, child) {
+		if (of_match_node(csky_bank_match, child))
+			continue;
+
+		info->nfunctions++;
+		info->ngroups += of_get_child_count(child);
+	}
+}
+
+static int csky_pinctrl_parse_groups(struct device_node *np,
+				     struct csky_pin_group *grp,
+				     struct csky_pinctrl *info,
+				     u32 index)
+{
+	struct csky_pin_bank *bank;
+	int size;
+	const __be32 *list;
+	int num;
+	int i, j;
+	int ret;
+
+	dev_dbg(info->dev, "group(%d): %s\n", index, np->name);
+
+	/* Initialise group */
+	grp->name = np->name;
+
+	/*
+	 * the binding format is csky,pins = <bank pin mux CONFIG>,
+	 * do sanity check and calculate pins number
+	 */
+	list = of_get_property(np, "csky,pins", &size);
+	/* we do not check return since it's safe node passed down */
+	size /= sizeof(*list);
+	if (!size || size % 4) {
+		dev_err(info->dev, "wrong pins number or pins and configs should be by 4\n");
+		return -EINVAL;
+	}
+
+	grp->npins = size / 4;
+
+	grp->pins = devm_kzalloc(info->dev, grp->npins * sizeof(unsigned int),
+				 GFP_KERNEL);
+	grp->data = devm_kzalloc(info->dev,
+				 grp->npins * sizeof(struct csky_pin_config),
+				 GFP_KERNEL);
+	if (!grp->pins || !grp->data)
+		return -ENOMEM;
+
+	for (i = 0, j = 0; i < size; i += 4, j++) {
+		const __be32 *phandle;
+		struct device_node *np_config;
+
+		num = be32_to_cpu(*list++);
+		bank = bank_num_to_bank(info, num);
+		if (IS_ERR(bank))
+			return PTR_ERR(bank);
+
+		grp->pins[j] = bank->pin_base + be32_to_cpu(*list++);
+		grp->data[j].func = be32_to_cpu(*list++);
+
+		phandle = list++;
+		if (!phandle)
+			return -EINVAL;
+
+		np_config = of_find_node_by_phandle(be32_to_cpup(phandle));
+		ret = pinconf_generic_parse_dt_config(np_config, NULL,
+				&grp->data[j].configs, &grp->data[j].nconfigs);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int csky_pinctrl_parse_functions(struct device_node *np,
+					struct csky_pinctrl *info,
+					u32 index)
+{
+	struct device_node *child;
+	struct csky_pmx_func *func;
+	struct csky_pin_group *grp;
+	int ret;
+	static u32 grp_index;
+	u32 i = 0;
+
+	dev_dbg(info->dev, "parse function(%d): %s\n", index, np->name);
+
+	func = &info->functions[index];
+
+	/* Initialise function */
+	func->name = np->name;
+	func->ngroups = of_get_child_count(np);
+	if (func->ngroups <= 0)
+		return 0;
+
+	func->groups = devm_kzalloc(info->dev,
+			func->ngroups * sizeof(char *), GFP_KERNEL);
+	if (!func->groups)
+		return -ENOMEM;
+
+	for_each_child_of_node(np, child) {
+		func->groups[i] = child->name;
+		grp = &info->groups[grp_index++];
+		ret = csky_pinctrl_parse_groups(child, grp, info, i++);
+		if (ret) {
+			of_node_put(child);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static int csky_pinctrl_parse_dt(struct platform_device *pdev,
+				 struct csky_pinctrl *info)
+{
+	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
+	struct device_node *child;
+	int ret;
+	int i;
+
+	csky_pinctrl_child_count(info, np);
+
+	dev_dbg(&pdev->dev, "nfunctions = %d\n", info->nfunctions);
+	dev_dbg(&pdev->dev, "ngroups = %d\n", info->ngroups);
+
+	info->functions = devm_kzalloc(dev, info->nfunctions *
+				       sizeof(struct csky_pmx_func),
+				       GFP_KERNEL);
+	if (!info->functions) {
+		dev_err(dev, "failed to allocate memory for function list\n");
+		return -EINVAL;
+	}
+
+	info->groups = devm_kzalloc(dev, info->ngroups *
+				    sizeof(struct csky_pin_group),
+				    GFP_KERNEL);
+	if (!info->groups) {
+		dev_err(dev, "failed allocate memory for ping group list\n");
+		return -EINVAL;
+	}
+
+	i = 0;
+
+	for_each_child_of_node(np, child) {
+		if (of_match_node(csky_bank_match, child))
+			continue;
+
+		ret = csky_pinctrl_parse_functions(child, info, i++);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to parse function\n");
+			of_node_put(child);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static int csky_pinctrl_register(struct platform_device *pdev,
+				 struct csky_pinctrl *info)
+{
+	struct pinctrl_desc *ctrldesc = &info->pctl;
+	struct pinctrl_pin_desc *pindesc, *pdesc;
+	struct csky_pin_bank *pin_bank;
+	int pin, bank, ret;
+	int k;
+
+	ctrldesc->name = "csky-pinctrl";
+	ctrldesc->owner = THIS_MODULE;
+	ctrldesc->pctlops = &csky_pctrl_ops;
+	ctrldesc->pmxops = &csky_pmx_ops;
+	ctrldesc->confops = &csky_pinconf_ops;
+
+	pindesc = devm_kzalloc(&pdev->dev, sizeof(*pindesc) *
+			       info->ctrl->nr_pins, GFP_KERNEL);
+	if (!pindesc) {
+		dev_err(&pdev->dev, "mem alloc for pin descriptors failed\n");
+		return -ENOMEM;
+	}
+	ctrldesc->pins = pindesc;
+	ctrldesc->npins = info->ctrl->nr_pins;
+
+	pdesc = pindesc;
+	for (bank = 0 , k = 0; bank < info->ctrl->nr_banks; bank++) {
+		pin_bank = &info->ctrl->pin_banks[bank];
+		for (pin = 0; pin < pin_bank->nr_pins; pin++, k++) {
+			pdesc->number = k;
+			pdesc->name = kasprintf(GFP_KERNEL, "%s-%d",
+						pin_bank->name, pin);
+			pdesc++;
+		}
+	}
+
+	ret = csky_pinctrl_parse_dt(pdev, info);
+	if (ret)
+		return ret;
+
+	info->pctl_dev = devm_pinctrl_register(&pdev->dev, ctrldesc, info);
+	if (IS_ERR(info->pctl_dev)) {
+		dev_err(&pdev->dev, "could not register pinctrl driver\n");
+		return PTR_ERR(info->pctl_dev);
+	}
+
+	for (bank = 0; bank < info->ctrl->nr_banks; ++bank) {
+		pin_bank = &info->ctrl->pin_banks[bank];
+		pin_bank->grange.name = pin_bank->name;
+		pin_bank->grange.id = bank;
+		pin_bank->grange.pin_base = pin_bank->pin_base;
+		pin_bank->grange.base = pin_bank->gpio_chip.base;
+		pin_bank->grange.npins = pin_bank->gpio_chip.ngpio;
+		pin_bank->grange.gc = &pin_bank->gpio_chip;
+		pinctrl_add_gpio_range(info->pctl_dev, &pin_bank->grange);
+	}
+
+	return 0;
+}
+
+/*
+ * GPIO handling
+ */
+
+static void csky_gpio_set(struct gpio_chip *gc, unsigned offset, int value)
+{
+	struct csky_pin_bank *bank = gpiochip_get_data(gc);
+	void __iomem *reg = bank->reg_base + GPIO_SWPORT_DR;
+	unsigned long flags;
+	u32 data;
+
+	spin_lock_irqsave(&bank->slock, flags);
+
+	data = readl(reg);
+	data &= ~BIT(offset);
+	if (value)
+		data |= BIT(offset);
+	writel(data, reg);
+
+	spin_unlock_irqrestore(&bank->slock, flags);
+}
+
+/*
+ * Returns the level of the pin for input direction and setting of the DR
+ * register for output gpios.
+ */
+static int csky_gpio_get(struct gpio_chip *gc, unsigned offset)
+{
+	struct csky_pin_bank *bank = gpiochip_get_data(gc);
+	u32 data;
+
+	data = readl(bank->reg_base + GPIO_EXT_PORT);
+	data >>= offset;
+	data &= 1;
+	return data;
+}
+
+/*
+ * gpiolib gpio_direction_input callback function. The setting of the pin
+ * mux function as 'gpio input' will be handled by the pinctrl susbsystem
+ * interface.
+ */
+static int csky_gpio_direction_input(struct gpio_chip *gc, unsigned offset)
+{
+	return pinctrl_gpio_direction_input(gc->base + offset);
+}
+
+/*
+ * gpiolib gpio_direction_output callback function. The setting of the pin
+ * mux function as 'gpio output' will be handled by the pinctrl susbsystem
+ * interface.
+ */
+static int csky_gpio_direction_output(struct gpio_chip *gc,
+				      unsigned offset, int value)
+{
+	csky_gpio_set(gc, offset, value);
+	return pinctrl_gpio_direction_output(gc->base + offset);
+}
+
+/*
+ * gpiolib gpio_to_irq callback function. Creates a mapping between a GPIO pin
+ * and a virtual IRQ, if not already present.
+ */
+static int csky_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
+{
+	struct csky_pin_bank *bank = gpiochip_get_data(gc);
+	unsigned int virq;
+
+	if (!bank->domain)
+		return -ENXIO;
+
+	virq = irq_create_mapping(bank->domain, offset);
+
+	return (virq) ? : -ENXIO;
+}
+
+static const struct gpio_chip csky_gpiolib_chip = {
+	.request = gpiochip_generic_request,
+	.free = gpiochip_generic_free,
+	.set = csky_gpio_set,
+	.get = csky_gpio_get,
+	.get_direction = csky_gpio_get_direction,
+	.direction_input = csky_gpio_direction_input,
+	.direction_output = csky_gpio_direction_output,
+	.to_irq = csky_gpio_to_irq,
+	.owner = THIS_MODULE,
+};
+
+/*
+ * Interrupt handling
+ */
+
+static void csky_irq_demux(struct irq_desc *desc)
+{
+	struct irq_chip *chip = irq_desc_get_chip(desc);
+	struct csky_pin_bank *bank = irq_desc_get_handler_data(desc);
+	u32 pend;
+
+	dev_dbg(bank->drvdata->dev, "got irq for bank %s\n", bank->name);
+
+	chained_irq_enter(chip, desc);
+
+	pend = readl_relaxed(bank->reg_base + GPIO_INT_STATUS);
+
+	while (pend) {
+		unsigned int irq, virq;
+
+		irq = __ffs(pend);
+		pend &= ~BIT(irq);
+		virq = irq_linear_revmap(bank->domain, irq);
+
+		if (!virq) {
+			dev_err(bank->drvdata->dev, "unmapped irq %d\n", irq);
+			continue;
+		}
+
+		dev_dbg(bank->drvdata->dev, "handling irq %d\n", irq);
+
+		/*
+		 * Triggering IRQ on both rising and falling edge
+		 * needs manual intervention.
+		 */
+		if (bank->toggle_edge_mode & BIT(irq)) {
+			u32 data, data_old, polarity;
+			unsigned long flags;
+
+			data = readl_relaxed(bank->reg_base + GPIO_EXT_PORT);
+			do {
+				spin_lock_irqsave(&bank->slock, flags);
+
+				polarity = readl_relaxed(bank->reg_base +
+							 GPIO_INT_POLARITY);
+				if (data & BIT(irq))
+					polarity &= ~BIT(irq);
+				else
+					polarity |= BIT(irq);
+				writel(polarity,
+				       bank->reg_base + GPIO_INT_POLARITY);
+
+				spin_unlock_irqrestore(&bank->slock, flags);
+
+				data_old = data;
+				data = readl_relaxed(bank->reg_base +
+						     GPIO_EXT_PORT);
+			} while ((data & BIT(irq)) != (data_old & BIT(irq)));
+		}
+
+		generic_handle_irq(virq);
+	}
+
+	chained_irq_exit(chip, desc);
+}
+
+static int csky_irq_set_type(struct irq_data *d, unsigned int type)
+{
+	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
+	struct csky_pin_bank *bank = gc->private;
+	u32 mask = BIT(d->hwirq);
+	u32 polarity;
+	u32 level;
+	u32 data;
+	unsigned long flags;
+	int ret;
+
+	/* make sure the pin is configured as gpio input */
+	ret = csky_set_mux(bank, d->hwirq, CSKY_FUNC_GPIO);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&bank->slock, flags);
+
+	data = readl_relaxed(bank->reg_base + GPIO_SWPORT_DDR);
+	data &= ~mask;
+	writel_relaxed(data, bank->reg_base + GPIO_SWPORT_DDR);
+
+	spin_unlock_irqrestore(&bank->slock, flags);
+
+	if (type & IRQ_TYPE_EDGE_BOTH)
+		irq_set_handler_locked(d, handle_edge_irq);
+	else
+		irq_set_handler_locked(d, handle_level_irq);
+
+	spin_lock_irqsave(&bank->slock, flags);
+	irq_gc_lock(gc);
+
+	level = readl_relaxed(gc->reg_base + GPIO_INTTYPE_LEVEL);
+	polarity = readl_relaxed(gc->reg_base + GPIO_INT_POLARITY);
+
+	switch (type) {
+	case IRQ_TYPE_EDGE_BOTH:
+		bank->toggle_edge_mode |= mask;
+		level |= mask;
+
+		/*
+		 * Determine gpio state. If 1 next interrupt should be falling
+		 * otherwise rising.
+		 */
+		data = readl(bank->reg_base + GPIO_EXT_PORT);
+		if (data & mask)
+			polarity &= ~mask;
+		else
+			polarity |= mask;
+		break;
+	case IRQ_TYPE_EDGE_RISING:
+		bank->toggle_edge_mode &= ~mask;
+		level |= mask;
+		polarity |= mask;
+		break;
+	case IRQ_TYPE_EDGE_FALLING:
+		bank->toggle_edge_mode &= ~mask;
+		level |= mask;
+		polarity &= ~mask;
+		break;
+	case IRQ_TYPE_LEVEL_HIGH:
+		bank->toggle_edge_mode &= ~mask;
+		level &= ~mask;
+		polarity |= mask;
+		break;
+	case IRQ_TYPE_LEVEL_LOW:
+		bank->toggle_edge_mode &= ~mask;
+		level &= ~mask;
+		polarity &= ~mask;
+		break;
+	default:
+		irq_gc_unlock(gc);
+		spin_unlock_irqrestore(&bank->slock, flags);
+		return -EINVAL;
+	}
+
+	writel_relaxed(level, gc->reg_base + GPIO_INTTYPE_LEVEL);
+	writel_relaxed(polarity, gc->reg_base + GPIO_INT_POLARITY);
+
+	irq_gc_unlock(gc);
+	spin_unlock_irqrestore(&bank->slock, flags);
+
+	return 0;
+}
+
+static void csky_irq_suspend(struct irq_data *d)
+{
+	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
+	struct csky_pin_bank *bank = gc->private;
+
+	bank->saved_masks = irq_reg_readl(gc, GPIO_INTMASK);
+	irq_reg_writel(gc, ~gc->wake_active, GPIO_INTMASK);
+}
+
+static void csky_irq_resume(struct irq_data *d)
+{
+	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
+	struct csky_pin_bank *bank = gc->private;
+
+	irq_reg_writel(gc, bank->saved_masks, GPIO_INTMASK);
+}
+
+static void csky_irq_gc_mask_clr_bit(struct irq_data *d)
+{
+	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
+	struct csky_pin_bank *bank = gc->private;
+
+	irq_gc_mask_clr_bit(d);
+}
+
+static void csky_irq_gc_mask_set_bit(struct irq_data *d)
+{
+	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
+	struct csky_pin_bank *bank = gc->private;
+
+	irq_gc_mask_set_bit(d);
+}
+
+static int csky_interrupts_register(struct platform_device *pdev,
+				    struct csky_pinctrl *info)
+{
+	struct csky_pin_ctrl *ctrl = info->ctrl;
+	struct csky_pin_bank *bank = ctrl->pin_banks;
+	unsigned int clr = IRQ_NOREQUEST | IRQ_NOPROBE | IRQ_NOAUTOEN;
+	struct irq_chip_generic *gc;
+	int ret;
+	int i, j;
+
+	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
+		if (!bank->valid) {
+			dev_warn(&pdev->dev, "bank %s is not valid\n",
+				 bank->name);
+			continue;
+		}
+
+		// TODO: 32 should be: gpio_chip->ngpio
+		bank->domain = irq_domain_add_linear(bank->of_node,
+						     bank->nr_pins,
+						     &irq_generic_chip_ops,
+						     NULL);
+		if (!bank->domain) {
+			dev_warn(&pdev->dev,
+				 "could not init irq domain for bank %s\n",
+				 bank->name);
+			continue;
+		}
+
+		ret = irq_alloc_domain_generic_chips(bank->domain,
+					bank->nr_pins, 1,
+					"csky_gpio_irq", handle_level_irq,
+					clr, 0, IRQ_GC_INIT_MASK_CACHE);
+		if (ret) {
+			dev_err(&pdev->dev,
+				"could not alloc generic chips for bank %s\n",
+				bank->name);
+			irq_domain_remove(bank->domain);
+			continue;
+		}
+
+		/*
+		 * Linux assumes that all interrupts start out disabled/masked.
+		 * Our driver only uses the concept of masked and always keeps
+		 * things enabled, so for us that's all masked and all enabled.
+		 */
+		writel_relaxed(0xffffffff, bank->reg_base + GPIO_INTMASK);
+		writel_relaxed(0xffffffff, bank->reg_base + GPIO_INTEN);
+
+		gc = irq_get_domain_generic_chip(bank->domain, 0);
+		gc->reg_base = bank->reg_base;
+		gc->private = bank;
+		gc->chip_types[0].regs.mask = GPIO_INTMASK;
+		gc->chip_types[0].regs.ack = GPIO_PORTS_EOI;
+		gc->chip_types[0].chip.irq_ack = irq_gc_ack_set_bit;
+		gc->chip_types[0].chip.irq_mask = csky_irq_gc_mask_set_bit;
+		gc->chip_types[0].chip.irq_unmask = csky_irq_gc_mask_clr_bit;
+		gc->chip_types[0].chip.irq_set_wake = irq_gc_set_wake;
+		gc->chip_types[0].chip.irq_suspend = csky_irq_suspend;
+		gc->chip_types[0].chip.irq_resume = csky_irq_resume;
+		gc->chip_types[0].chip.irq_set_type = csky_irq_set_type;
+		gc->wake_enabled = IRQ_MSK(bank->nr_pins);
+
+		irq_set_chained_handler_and_data(bank->irq,
+						 csky_irq_demux, bank);
+
+		/* map the gpio irqs here, when the clock is still running */
+		// TODO: 32 should be: gpio_chip->ngpio
+		for (j = 0 ; j < 8 ; j++)
+			irq_create_mapping(bank->domain, j);
+	}
+
+	return 0;
+}
+
+static int csky_gpiolib_register(struct platform_device *pdev,
+				 struct csky_pinctrl *info)
+{
+	struct csky_pin_ctrl *ctrl = info->ctrl;
+	struct csky_pin_bank *bank = ctrl->pin_banks;
+	struct gpio_chip *gc;
+	int ret;
+	int i;
+
+	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
+		if (!bank->valid) {
+			dev_warn(&pdev->dev, "bank %s is not valid\n",
+				 bank->name);
+			continue;
+		}
+
+		bank->gpio_chip = csky_gpiolib_chip;
+
+		gc = &bank->gpio_chip;
+		gc->base = bank->pin_base;
+		gc->ngpio = bank->nr_pins;
+		gc->parent = &pdev->dev;
+		gc->of_node = bank->of_node;
+		gc->label = bank->name;
+
+		ret = gpiochip_add_data(gc, bank);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to register gpio_chip %s, error code: %d\n",
+							gc->label, ret);
+			goto fail;
+		}
+	}
+
+	csky_interrupts_register(pdev, info);
+
+	return 0;
+
+fail:
+	for (--i, --bank; i >= 0; --i, --bank) {
+		if (!bank->valid)
+			continue;
+		gpiochip_remove(&bank->gpio_chip);
+	}
+	return ret;
+}
+
+static int csky_gpiolib_unregister(struct platform_device *pdev,
+				   struct csky_pinctrl *info)
+{
+	struct csky_pin_ctrl *ctrl = info->ctrl;
+	struct csky_pin_bank *bank = ctrl->pin_banks;
+	int i;
+
+	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
+		if (!bank->valid)
+			continue;
+		gpiochip_remove(&bank->gpio_chip);
+	}
+
+	return 0;
+}
+
+static int csky_get_bank_data(struct csky_pin_bank *bank,
+			      struct csky_pinctrl *info)
+{
+	struct resource res;
+//	void __iomem *base;
+
+	if (!of_device_is_compatible(bank->of_node, "csky,eragon-gpio-bank")) {
+		dev_err(info->dev, "Only 'eragon-gpio-bank' is supported\n");
+		return -ENODEV;
+	}
+
+	if (of_address_to_resource(bank->of_node, 0, &res)) {
+		dev_err(info->dev, "cannot find IO resource for bank\n");
+		return -ENOENT;
+	}
+
+	bank->reg_base = devm_ioremap_resource(info->dev, &res);
+	if (IS_ERR(bank->reg_base))
+		return PTR_ERR(bank->reg_base);
+
+	bank->irq = irq_of_parse_and_map(bank->of_node, 0);
+
+	return 0;
+}
+
+static const struct of_device_id csky_pinctrl_dt_match[];
+
+/* retrieve the soc specific data */
+static struct csky_pin_ctrl *csky_pinctrl_get_soc_data(
+						struct csky_pinctrl *d,
+						struct platform_device *pdev)
+{
+	const struct of_device_id *match;
+	struct device_node *node = pdev->dev.of_node;
+	struct device_node *np;
+	struct csky_pin_ctrl *ctrl;
+	struct csky_pin_bank *bank;
+	int i;
+	//int grf_offs, pmu_offs, drv_grf_offs, drv_pmu_offs, j
+
+	match = of_match_node(csky_pinctrl_dt_match, node);
+	ctrl = (struct csky_pin_ctrl *)match->data;
+
+	for_each_child_of_node(node, np) {
+		if (!of_find_property(np, "gpio-controller", NULL))
+			continue;
+
+		bank = ctrl->pin_banks;
+		for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
+			if (!strcmp(bank->name, np->name)) {
+				bank->of_node = np;
+
+				if (!csky_get_bank_data(bank, d))
+					bank->valid = true;
+
+				break;
+			}
+		}
+	}
+
+	bank = ctrl->pin_banks;
+	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
+		//int bank_pins = 0;
+
+		spin_lock_init(&bank->slock);
+		bank->drvdata = d;
+		bank->pin_base = ctrl->nr_pins;
+		ctrl->nr_pins += bank->nr_pins;
+	}
+
+	return ctrl;
+}
+
+static int __maybe_unused csky_pinctrl_suspend(struct device *dev)
+{
+	struct csky_pinctrl *info = dev_get_drvdata(dev);
+	int ret = pinctrl_force_sleep(info->pctl_dev);
+	if (ret)
+		return ret;
+
+	// TODO: implement on eragon
+	return 0;
+}
+
+static int __maybe_unused csky_pinctrl_resume(struct device *dev)
+{
+	struct csky_pinctrl *info = dev_get_drvdata(dev);
+
+	// TODO: implement on eragon
+
+	return pinctrl_force_default(info->pctl_dev);
+}
+
+static SIMPLE_DEV_PM_OPS(csky_pinctrl_dev_pm_ops,
+			 NULL, /* csky_pinctrl_suspend, */
+			 NULL  /* csky_pinctrl_resume */);
+
+static int csky_pinctrl_probe(struct platform_device *pdev)
+{
+	struct csky_pinctrl *info;
+	struct device *dev = &pdev->dev;
+	struct csky_pin_ctrl *ctrl;
+	//struct device_node *np = pdev->dev.of_node;
+	//struct resource *res;
+	//void __iomem *base;
+	int ret;
+
+	if (!dev->of_node) {
+		dev_err(dev, "device tree node not found\n");
+		return -ENODEV;
+	}
+
+	info = devm_kzalloc(dev, sizeof(struct csky_pinctrl), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	info->dev = dev;
+
+	ctrl = csky_pinctrl_get_soc_data(info, pdev);
+	if (!ctrl) {
+		dev_err(dev, "driver data not available\n");
+		return -EINVAL;
+	}
+	info->ctrl = ctrl;
+
+	ret = csky_gpiolib_register(pdev, info);
+	if (ret)
+		return ret;
+
+	ret = csky_pinctrl_register(pdev, info);
+	if (ret) {
+		csky_gpiolib_unregister(pdev, info);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, info);
+
+	return 0;
+}
+
+static struct csky_pin_bank eragon_pin_banks[] = {
+	PIN_BANK(0, 8, "gpio0"),
+	PIN_BANK(1, 8, "gpio1"),
+	PIN_BANK(2, 8, "gpio2"),
+	PIN_BANK(3, 8, "gpio3"),
+};
+
+static struct csky_pin_ctrl eragon_pin_ctrl = {
+	.pin_banks	= eragon_pin_banks,
+	.nr_banks	= ARRAY_SIZE(eragon_pin_banks),
+	.label		= "ERAGON-GPIO",
+	.type		= ERAGON,
+//	.grf_mux_offset	= 0x60,
+//	.pull_calc_reg	= eragon_calc_pull_reg_and_bit,
+};
+
 static const struct of_device_id csky_pinctrl_dt_match[] = {
-	{ .compatible = "csky,eragon-pinctrl",
-		.data = (void *)&eragon_pinctrl_init },
+	{ .compatible 	= "csky,eragon-pinctrl",
+	  .data 	= (void *)&eragon_pin_ctrl },
 	{},
 };
 
 static struct platform_driver csky_pinctrl_driver = {
-	.probe  = csky_pinctrl_probe,
+	.probe	= csky_pinctrl_probe,
 	.driver = {
-		.name	= "csky-pinctrl",
-		.of_match_table = csky_pinctrl_dt_match,
+		.name		= "csky-pinctrl",
+		.pm		= &csky_pinctrl_dev_pm_ops,
+		.of_match_table	= csky_pinctrl_dt_match,
 	},
 };
 
-static int __init csky_pinctrl_init(void)
+static int __init csky_pinctrl_drv_register(void)
 {
 	return platform_driver_register(&csky_pinctrl_driver);
 }
-device_initcall(csky_pinctrl_init);
+postcore_initcall(csky_pinctrl_drv_register);
 

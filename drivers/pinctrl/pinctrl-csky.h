@@ -1,5 +1,5 @@
 /*
- * Eragon specific support for C-SKY pinctrl/gpiolib driver.
+ * pin-controller/pin-mux/pin-config/gpio-driver for C-SKY's SoCs.
  *
  * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
  * Author: Charles Lu <chongzhi_lu@c-sky.com>
@@ -15,16 +15,21 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/device.h>
-#include <linux/interrupt.h>
-#include <linux/irqdomain.h>
-#include <linux/irq.h>
-#include <linux/of_irq.h>
-#include <linux/irqchip/chained_irq.h>
-#include <linux/io.h>
-#include <linux/slab.h>
-#include <linux/err.h>
+#ifndef __PINCTRL_CSKY_H
+#define __PINCTRL_CSKY_H
 
-#include "pinctrl-csky.h"
+#define CSKY_GPIO0	0
+#define CSKY_GPIO1	1
+#define CSKY_GPIO2	2
+#define CSKY_GPIO3	3
+#define CSKY_GPIO4	4
+#define CSKY_GPIO6	6
 
+#define CSKY_FUNC_GPIO	0
+#define CSKY_FUNC_1	1
+#define CSKY_FUNC_2	2
+#define CSKY_FUNC_3	3
+#define CSKY_FUNC_4	4
+
+
+#endif /* __PINCTRL_CSKY_H */

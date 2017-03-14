@@ -1,5 +1,5 @@
 # C-SKY pin control drivers
 
-obj-y	+= pinctrl-csky.o
-obj-y	+= pinctrl-eragon.o
+obj-$(CONFIG_PINCTRL_CSKY)	+= pinctrl-csky.o
+obj-$(CONFIG_PINCTRL_ERAGON)	+= pinctrl-eragon.o
 
