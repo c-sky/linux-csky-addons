@@ -16,5 +16,9 @@ config VPU_CODA7541
 	tristate "cnm coda7541 driver support"
 	depends on OF
 	select VIDEO_CODA
+
+config FORCE_MAX_ZONEORDER
+	int "Max kmalloc size. Set to 12 is 8MB for FHD(1080p) output frame buffer"
+	default 11
 endif
 
