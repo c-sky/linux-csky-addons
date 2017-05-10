@@ -1,0 +1,12 @@
+
+config FB_CSKY
+	tristate "C-SKY framebuffer support"
+	depends on FB
+	select VIDEOMODE_HELPERS
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+	default n
+	help
+	  Say Y if you want support for the C-SKY framebuffer.
+

@@ -2,5 +2,6 @@ menu "Device Drivers"
 
 source "addons/drivers/pinctrl/Kconfig"
 source "addons/drivers/vpu/Kconfig"
+source "addons/drivers/video/fbdev/Kconfig"
 endmenu
 
