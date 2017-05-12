@@ -27,6 +27,8 @@
 
 #define DRIVER_NAME "csky_fb"
 
+#define VSYNC_TIMEOUT_MSEC	100
+
 /*
  * enable/disable lcdc
  */
@@ -50,8 +52,10 @@ static int csky_fb_check_var(struct fb_var_screeninfo *var,
 {
 	struct csky_fb_info *info = fbinfo->par;
 
-	var->xres_virtual = var->xres = info->vm.hactive;
-	var->yres_virtual = var->yres = info->vm.vactive;
+	var->xres = info->vm.hactive;
+	var->yres = info->vm.vactive;
+	var->xres_virtual = var->xres;
+	var->yres_virtual = var->yres * 2; /* double buffer supported */
 
 	var->width = info->vm.hactive;
 	var->height = info->vm.vactive;
@@ -119,10 +123,76 @@ static int csky_fb_setcolreg(unsigned regno,
 	return 0;
 }
 
-static int csky_fb_mmap(struct fb_info *fbinfo,
-			struct vm_area_struct *vma)
+static int csky_fb_pan_display(struct fb_var_screeninfo *var,
+			       struct fb_info *fbinfo)
 {
-	return remap_vmalloc_range(vma, (void *)fbinfo->fix.smem_start, vma->vm_pgoff);
+	struct csky_fb_info *info = fbinfo->par;
+	unsigned long base;
+
+	/*
+	 * adjust the position of visible screen
+	 * note: xoffset not supported
+	 */
+	base = fbinfo->fix.smem_start +
+	       fbinfo->var.yoffset * fbinfo->fix.line_length;
+
+	writel(base, info->iobase + CSKY_LCD_PBASE);
+	return 0;
+}
+
+static void csky_fb_enable_irq(struct csky_fb_info *info, u32 mask)
+{
+	u32 tmp;
+	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
+	tmp |= mask;
+	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
+	return;
+}
+
+static void csky_fb_disable_irq(struct csky_fb_info *info, u32 mask)
+{
+	u32 tmp;
+	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
+	tmp &= ~mask;
+	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
+	return;
+}
+
+/*
+ * sleep until next VSYNC interrupt or timeout
+ */
+static int csky_fb_wait_for_vsync(struct fb_info *fbinfo)
+{
+	struct csky_fb_info *info = fbinfo->par;
+	unsigned long count;
+	int ret;
+
+	count = info->vsync_info.count;
+	csky_fb_enable_irq(info, CSKY_LCDINT_MASK_BAU);
+	ret = wait_event_interruptible_timeout(info->vsync_info.wait,
+					       count != info->vsync_info.count,
+					       msecs_to_jiffies(VSYNC_TIMEOUT_MSEC));
+	if (ret == 0)
+		return -ETIMEDOUT;
+
+	return 0;
+}
+
+static int csky_fb_ioctl(struct fb_info *fbinfo,
+			 unsigned int cmd,
+			 unsigned long arg)
+{
+	int ret;
+
+	switch (cmd) {
+	case FBIO_WAITFORVSYNC:
+		ret = csky_fb_wait_for_vsync(fbinfo);
+		break;
+	default:
+		ret = -ENOTTY;
+	}
+
+	return ret;
 }
 
 static struct fb_ops csky_fb_ops = {
@@ -131,7 +201,8 @@ static struct fb_ops csky_fb_ops = {
 	.fb_set_par     = csky_fb_set_par,
 	.fb_blank       = csky_fb_blank,
 	.fb_setcolreg   = csky_fb_setcolreg,
-	.fb_mmap	= csky_fb_mmap,
+	.fb_pan_display = csky_fb_pan_display,
+	.fb_ioctl       = csky_fb_ioctl,
 	.fb_fillrect    = cfb_fillrect,
 	.fb_copyarea    = cfb_copyarea,
 	.fb_imageblit   = cfb_imageblit,
@@ -209,7 +280,10 @@ static int csky_fb_init_registers(struct fb_info *fbinfo)
 	writel(timing0, info->iobase + CSKY_LCD_TIMING0);
 	writel(timing1, info->iobase + CSKY_LCD_TIMING1);
 	writel(timing2, info->iobase + CSKY_LCD_TIMING2);
+
+	/* disable all the lcdc interrupts */
 	writel(0x0, info->iobase + CSKY_LCD_INT_MASK);
+
 	videosize = ((info->vm.vactive - 1) << 11) |
 		    (info->vm.hactive - 1);
 	writel(videosize, info->iobase + CSKY_LCD_VIDEOSIZE);
@@ -226,8 +300,11 @@ static int csky_fb_init_registers(struct fb_info *fbinfo)
 static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 {
 	struct csky_fb_info *info = dev_id;
-	unsigned long status = readl(info->iobase + CSKY_LCD_INT_STAT);
+	unsigned long status;
 
+	spin_lock(&info->slock);
+
+	status = readl(info->iobase + CSKY_LCD_INT_STAT);
 	/* clear interrupts */
 	writel(status, info->iobase + CSKY_LCD_INT_STAT);
 
@@ -235,8 +312,11 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 		printk("LCD_INT: LCD has been disabled\n");
 	}
 
-	if (status & CSKY_LCDINT_STAT_BAU) {
-		printk("LCD_INT: Base address update\n");
+	if (status & CSKY_LCDINT_STAT_BAU) { /* VSYNC interrupt */
+		info->vsync_info.count++;
+		wake_up_interruptible(&info->vsync_info.wait);
+		/* disable vsync interrupt */
+		csky_fb_disable_irq(info, CSKY_LCDINT_MASK_BAU);
 	}
 
 	if (status & CSKY_LCDINT_STAT_BER) {
@@ -247,6 +327,7 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 		printk("LCD_INT: Line FIFO underrun\n");
 	}
 
+	spin_unlock(&info->slock);
 	return IRQ_HANDLED;
 }
 
@@ -330,6 +411,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 	/* initialize the fb_info */
 
 	info = fbinfo->par;
+	spin_lock_init(&info->slock);
 	info->dev = &pdev->dev;
 	info->iobase = iobase;
 	info->irq = irq;
@@ -339,14 +421,17 @@ static int csky_fb_probe(struct platform_device *pdev)
 	info->hsync_pulse_pol = hsync_pulse_pol;
 	info->vsync_pulse_pol = vsync_pulse_pol;
 	info->pixel_clock_pol = pixel_clock_pol;
+	init_waitqueue_head(&info->vsync_info.wait);
 
 	strcpy(fbinfo->fix.id, DRIVER_NAME);
-	fbinfo->fix.smem_len = vm.hactive * vm.vactive * (bits_per_pixel / 8);
+	fbinfo->fix.smem_len = vm.hactive * vm.vactive *
+			       (bits_per_pixel / 8) *
+			       2; /* double buffer supported */
 	fbinfo->fix.type = FB_TYPE_PACKED_PIXELS;
 	fbinfo->fix.type_aux = 0;
 	fbinfo->fix.visual = FB_VISUAL_TRUECOLOR;
 	fbinfo->fix.xpanstep = 0;
-	fbinfo->fix.ypanstep = 0; /* double buffer not supported */
+	fbinfo->fix.ypanstep = 1; /* double buffer supported */
 	fbinfo->fix.ywrapstep = 0;
 	fbinfo->fix.line_length = vm.hactive * (bits_per_pixel / 8);
 	fbinfo->fix.mmio_start = mem->start;
@@ -379,18 +464,6 @@ static int csky_fb_probe(struct platform_device *pdev)
 #if 1
 {
 	u32 i, j;
-	i=j=0;
-/*
-	for (;j<160;j++) // 0xb6e00000
-		for (i=0;i<800;i++)
-			*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x00ff0000;
-	for (;j<320;j++) // 0xb6e7d000
-		for (i=0;i<800;i++)
-			*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x0000ff00;
-	for (;j<480;j++) // 0xb6efa000
-		for (i=0;i<800;i++)
-			*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x000000ff;
-*/
 	memset(fbinfo->screen_base, 0, 800*480*4);
 	j=0;
 	for (i=0;i<800;i++)

@@ -113,7 +113,18 @@
 #define CSKY_LCDINT_MASK_BER	(1 << 2)
 #define CSKY_LCDINT_MASK_LFU	(1 << 3)
 
+/**
+ * struct csky_fb_vsync - vsync information
+ * @wait:  a queue for processes waiting for vsync
+ * @count: vsync interrupt count
+ */
+struct csky_fb_vsync {
+	wait_queue_head_t wait;
+	unsigned int count;
+};
+
 struct csky_fb_info {
+	spinlock_t slock;
 	struct device *dev;
 	void __iomem *iobase;
 	int irq;
@@ -124,6 +135,7 @@ struct csky_fb_info {
 	u32 hsync_pulse_pol; /* HSYNC pulse polarity */
 	u32 vsync_pulse_pol; /* VSYNC pulse polarity */
 	u32 pixel_clock_pol; /* pixel clock polarity */
+	struct csky_fb_vsync vsync_info;
 };
 
 #endif /* __CSKY_FB_H__ */
