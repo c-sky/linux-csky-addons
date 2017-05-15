@@ -23,6 +23,7 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
+#include <linux/uaccess.h>
 #include "csky-fb.h"
 
 #define DRIVER_NAME "csky_fb"
@@ -178,18 +179,80 @@ static int csky_fb_wait_for_vsync(struct fb_info *fbinfo)
 	return 0;
 }
 
+static void csky_fb_set_pixel_format(struct csky_fb_info *info,
+				     enum csky_fb_pixel_format fmt)
+{
+	u32 control;
+
+	control = readl(info->iobase + CSKY_LCD_CONTROL);
+	control &= ~CSKY_LCDCON_DFS_MASK_SHIFTED;
+	control |= fmt;
+	writel(control, info->iobase + CSKY_LCD_CONTROL);
+
+	info->pixel_fmt = fmt;
+	return;
+}
+
+static void csky_fb_set_lcd_pbase(struct csky_fb_info *info,
+				  struct csky_fb_lcd_pbase_yuv *pbase)
+{
+	writel(pbase->y, info->iobase + CSKY_LCD_PBASE_Y);
+	writel(pbase->u, info->iobase + CSKY_LCD_PBASE_U);
+	writel(pbase->v, info->iobase + CSKY_LCD_PBASE_V);
+	info->pbase_yuv.y = pbase->y;
+	info->pbase_yuv.u = pbase->u;
+	info->pbase_yuv.v = pbase->v;
+	return;
+}
+
 static int csky_fb_ioctl(struct fb_info *fbinfo,
 			 unsigned int cmd,
 			 unsigned long arg)
 {
-	int ret;
+	struct csky_fb_info *info = fbinfo->par;
+	void __user *argp = (void __user *)arg;
+	int ret = 0;
 
 	switch (cmd) {
 	case FBIO_WAITFORVSYNC:
 		ret = csky_fb_wait_for_vsync(fbinfo);
 		break;
+
+	case CSKY_FBIO_SET_COLOR_FMT:
+		{
+			enum csky_fb_pixel_format fmt;
+
+			if (copy_from_user(&fmt, argp, sizeof(fmt))) {
+				ret = -EFAULT;
+				break;
+			}
+
+			if (fmt == info->pixel_fmt)
+				break;
+
+			csky_fb_set_pixel_format(info, fmt);
+			break;
+		}
+
+	case CSKY_FBIO_SET_PBASE_YUV:
+		{
+			struct csky_fb_lcd_pbase_yuv base;
+
+			if (copy_from_user(&base, argp, sizeof(base))) {
+				ret = -EFAULT;
+				break;
+			}
+
+			if ((base.y == info->pbase_yuv.y) &&
+			    (base.u == info->pbase_yuv.u) &&
+			    (base.v == info->pbase_yuv.v))
+				break;
+
+			csky_fb_set_lcd_pbase(info, &base);
+			break;
+		}
 	default:
-		ret = -ENOTTY;
+		ret = -ENOIOCTLCMD;
 	}
 
 	return ret;

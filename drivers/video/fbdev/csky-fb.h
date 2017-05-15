@@ -78,6 +78,7 @@
 #define CSKY_LCDCON_DFS_YUV444		(1 << 13)
 #define CSKY_LCDCON_DFS_YUV422		(2 << 13)
 #define CSKY_LCDCON_DFS_YUV420		(3 << 13)
+#define CSKY_LCDCON_DFS_MASK_SHIFTED	(3 << 13)
 
 /*
  * LCD_TIMING2 register
@@ -123,6 +124,25 @@ struct csky_fb_vsync {
 	unsigned int count;
 };
 
+#define CSKY_FBIO_BASE	0x30
+#define CSKY_FBIO_SET_COLOR_FMT	_IOW('F', CSKY_FBIO_BASE+0, \
+					enum csky_fb_pixel_format)
+#define CSKY_FBIO_SET_PBASE_YUV	_IOW('F', CSKY_FBIO_BASE+1, \
+					struct csky_fb_lcd_pbase_yuv)
+
+enum csky_fb_pixel_format {
+	CSKY_FB_PIXEL_FMT_RGB = CSKY_LCDCON_DFS_RGB,
+	CSKY_FB_PIXEL_FMT_YUV444 = CSKY_LCDCON_DFS_YUV444,
+	CSKY_FB_PIXEL_FMT_YUV422 = CSKY_LCDCON_DFS_YUV422,
+	CSKY_FB_PIXEL_FMT_YUV420 = CSKY_LCDCON_DFS_YUV420,
+};
+
+struct csky_fb_lcd_pbase_yuv {
+	unsigned int y; /* LCD_PBASE_Y */
+	unsigned int u; /* LCD_PBASE_U */
+	unsigned int v; /* LCD_PBASE_V */
+};
+
 struct csky_fb_info {
 	spinlock_t slock;
 	struct device *dev;
@@ -136,6 +156,8 @@ struct csky_fb_info {
 	u32 vsync_pulse_pol; /* VSYNC pulse polarity */
 	u32 pixel_clock_pol; /* pixel clock polarity */
 	struct csky_fb_vsync vsync_info;
+	enum csky_fb_pixel_format pixel_fmt;
+	struct csky_fb_lcd_pbase_yuv pbase_yuv;
 };
 
 #endif /* __CSKY_FB_H__ */
