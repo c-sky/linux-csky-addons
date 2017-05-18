@@ -30,6 +30,72 @@
 
 #define VSYNC_TIMEOUT_MSEC	100
 
+
+static void csky_fb_enable_irq(struct csky_fb_info *info, u32 mask)
+{
+	u32 tmp;
+	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
+	tmp |= mask;
+	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
+	return;
+}
+
+static void csky_fb_disable_irq(struct csky_fb_info *info, u32 mask)
+{
+	u32 tmp;
+	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
+	tmp &= ~mask;
+	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
+	return;
+}
+
+/*
+ * sleep until next VSYNC interrupt or timeout
+ */
+static int csky_fb_wait_for_vsync(struct fb_info *fbinfo)
+{
+	struct csky_fb_info *info = fbinfo->par;
+	unsigned long count;
+	int ret;
+
+	count = info->vsync_info.count;
+	csky_fb_enable_irq(info, CSKY_LCDINT_MASK_BAU);
+	ret = wait_event_interruptible_timeout(
+				info->vsync_info.wait,
+				count != info->vsync_info.count,
+				msecs_to_jiffies(VSYNC_TIMEOUT_MSEC));
+	if (ret == 0)
+		return -ETIMEDOUT;
+
+	return 0;
+}
+
+static void csky_fb_set_pixel_format(struct csky_fb_info *info,
+				     enum csky_fb_pixel_format fmt)
+{
+	u32 control;
+
+	control = readl(info->iobase + CSKY_LCD_CONTROL);
+	control &= ~CSKY_LCDCON_DFS_MASK_SHIFTED;
+	control |= fmt;
+	writel(control, info->iobase + CSKY_LCD_CONTROL);
+
+	info->pixel_fmt = fmt;
+	return;
+}
+
+static void csky_fb_set_lcd_pbase(struct csky_fb_info *info,
+				  struct csky_fb_lcd_pbase_yuv *pbase)
+{
+	writel(pbase->y, info->iobase + CSKY_LCD_PBASE_Y);
+	writel(pbase->u, info->iobase + CSKY_LCD_PBASE_U);
+	writel(pbase->v, info->iobase + CSKY_LCD_PBASE_V);
+	info->pbase_yuv.y = pbase->y;
+	info->pbase_yuv.u = pbase->u;
+	info->pbase_yuv.v = pbase->v;
+	return;
+}
+
 /*
  * enable/disable lcdc
  */
@@ -39,13 +105,95 @@ static void csky_fb_lcd_enable(struct csky_fb_info *info, bool enable)
 
 	control = readl(info->iobase + CSKY_LCD_CONTROL);
 
-	if (enable)
+	if (enable) {
 		control |= CSKY_LCDCON_LEN;
-	else
+		info->lcdc_enabled = true;
+	}
+	else {
 		control &= ~CSKY_LCDCON_LEN;
+		info->lcdc_enabled = false;
+	}
 
 	writel(control, info->iobase + CSKY_LCD_CONTROL);
 	return;
+}
+
+static void csky_fb_lcd_reset(struct csky_fb_info *info)
+{
+#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
+#define SWRC1 0x3c /* software reset control register1 */
+#define LCDC_RST (1 << 14)
+	u32 control;
+	control = readl(info->iobase_chip_ctrl + SWRC1);
+	/* reset lcdc */
+	control &= ~LCDC_RST;
+	writel(control, info->iobase_chip_ctrl + SWRC1);
+	mdelay(1); /* delay >1us */
+	control |= LCDC_RST;
+	writel(control, info->iobase_chip_ctrl + SWRC1);
+	mdelay(1);
+
+	info->lcdc_enabled = false;
+#endif
+	return;
+}
+
+static int csky_fb_init_registers(struct fb_info *fbinfo)
+{
+	struct csky_fb_info *info = fbinfo->par;
+	u32 videosize;
+
+	u32 control = info->pixel_fmt |
+		      CSKY_LCDCON_OUT_24BIT |
+		      CSKY_LCDCON_WML_8WORD |
+		      CSKY_LCDCON_VBL_16CYCLES |
+		      CSKY_LCDCON_PAS_TFT;
+	u32 timing0 = (((info->vm.hback_porch - 1) & 0xff) << 24) |
+		      (((info->vm.hfront_porch - 1) & 0xff) << 16) |
+		      (((info->vm.hsync_len - 1) & 0x3f) << 10) |
+		      ((info->vm.hactive - 1) & 0x3ff);
+	u32 timing1 = (((info->vm.vback_porch - 1) & 0xff) << 24) |
+		      (((info->vm.vfront_porch - 1) & 0xff) << 16) |
+		      (((info->vm.vsync_len - 1) & 0x3f) << 10) |
+		      ((info->vm.vactive - 1) & 0x3ff);
+	u32 timing2 = 0;
+
+	if (info->pixel_clock_pol)
+		timing2 |= CSKY_LCDTIM2_PCP_FALLING;
+	if (info->hsync_pulse_pol)
+		timing2 |= CSKY_LCDTIM2_HSP_ACT_LOW;
+	if (info->vsync_pulse_pol)
+		timing2 |= CSKY_LCDTIM2_VSP_ACT_LOW;
+	if (info->pixel_clk_src)
+		timing2 |= CSKY_LCDTIM2_CLKS_EXT;
+	timing2 |= info->pcd & 0xff;
+
+	writel(timing0, info->iobase + CSKY_LCD_TIMING0);
+	writel(timing1, info->iobase + CSKY_LCD_TIMING1);
+	writel(timing2, info->iobase + CSKY_LCD_TIMING2);
+
+	/* disable all the lcdc interrupts */
+	writel(0x0, info->iobase + CSKY_LCD_INT_MASK);
+
+	videosize = ((info->vm.vactive - 1) << 11) |
+		    (info->vm.hactive - 1);
+	writel(videosize, info->iobase + CSKY_LCD_VIDEOSIZE);
+
+	/* set base address */
+	writel(fbinfo->fix.smem_start, info->iobase + CSKY_LCD_PBASE);
+	writel(info->pbase_yuv.y, info->iobase + CSKY_LCD_PBASE_Y);
+	writel(info->pbase_yuv.u, info->iobase + CSKY_LCD_PBASE_U);
+	writel(info->pbase_yuv.v, info->iobase + CSKY_LCD_PBASE_V);
+
+	/* enable lcdc */
+	control |= CSKY_LCDCON_LEN;
+	writel(control, info->iobase + CSKY_LCD_CONTROL);
+
+	/* skip the vsync interrupt triggered by enabling the LCDC */
+	csky_fb_wait_for_vsync(fbinfo);
+
+	info->lcdc_enabled = true;
+	return 0;
 }
 
 static int csky_fb_check_var(struct fb_var_screeninfo *var,
@@ -101,15 +249,19 @@ static int csky_fb_blank(int blank_mode, struct fb_info *fbinfo)
 
 	switch (blank_mode) {
 	case FB_BLANK_UNBLANK:
-		/* turn on lcdc */
-		csky_fb_lcd_enable(info, true);
+		/* enable/init lcdc */
+		if (!info->lcdc_enabled)
+			csky_fb_init_registers(fbinfo);
 		break;
 	case FB_BLANK_NORMAL:
 	case FB_BLANK_VSYNC_SUSPEND:
 	case FB_BLANK_HSYNC_SUSPEND:
 	case FB_BLANK_POWERDOWN:
-		/* turn off lcdc */
-		csky_fb_lcd_enable(info, false);
+		/* disable/reset lcdc */
+		if (info->lcdc_enabled) {
+			csky_fb_wait_for_vsync(fbinfo);
+			csky_fb_lcd_reset(info);
+		}
 		break;
 	default:
 		break;
@@ -135,74 +287,9 @@ static int csky_fb_pan_display(struct fb_var_screeninfo *var,
 	 * note: xoffset not supported
 	 */
 	base = fbinfo->fix.smem_start +
-	       fbinfo->var.yoffset * fbinfo->fix.line_length;
-
+	       var->yoffset * fbinfo->fix.line_length;
 	writel(base, info->iobase + CSKY_LCD_PBASE);
 	return 0;
-}
-
-static void csky_fb_enable_irq(struct csky_fb_info *info, u32 mask)
-{
-	u32 tmp;
-	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
-	tmp |= mask;
-	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
-	return;
-}
-
-static void csky_fb_disable_irq(struct csky_fb_info *info, u32 mask)
-{
-	u32 tmp;
-	tmp = readl(info->iobase + CSKY_LCD_INT_MASK);
-	tmp &= ~mask;
-	writel(tmp, info->iobase + CSKY_LCD_INT_MASK);
-	return;
-}
-
-/*
- * sleep until next VSYNC interrupt or timeout
- */
-static int csky_fb_wait_for_vsync(struct fb_info *fbinfo)
-{
-	struct csky_fb_info *info = fbinfo->par;
-	unsigned long count;
-	int ret;
-
-	count = info->vsync_info.count;
-	csky_fb_enable_irq(info, CSKY_LCDINT_MASK_BAU);
-	ret = wait_event_interruptible_timeout(info->vsync_info.wait,
-					       count != info->vsync_info.count,
-					       msecs_to_jiffies(VSYNC_TIMEOUT_MSEC));
-	if (ret == 0)
-		return -ETIMEDOUT;
-
-	return 0;
-}
-
-static void csky_fb_set_pixel_format(struct csky_fb_info *info,
-				     enum csky_fb_pixel_format fmt)
-{
-	u32 control;
-
-	control = readl(info->iobase + CSKY_LCD_CONTROL);
-	control &= ~CSKY_LCDCON_DFS_MASK_SHIFTED;
-	control |= fmt;
-	writel(control, info->iobase + CSKY_LCD_CONTROL);
-
-	info->pixel_fmt = fmt;
-	return;
-}
-
-static void csky_fb_set_lcd_pbase(struct csky_fb_info *info,
-				  struct csky_fb_lcd_pbase_yuv *pbase)
-{
-	writel(pbase->y, info->iobase + CSKY_LCD_PBASE_Y);
-	writel(pbase->u, info->iobase + CSKY_LCD_PBASE_U);
-	writel(pbase->v, info->iobase + CSKY_LCD_PBASE_V);
-	info->pbase_yuv.y = pbase->y;
-	info->pbase_yuv.u = pbase->u;
-	info->pbase_yuv.v = pbase->v;
-	return;
 }
 
 static int csky_fb_ioctl(struct fb_info *fbinfo,
@@ -218,7 +305,7 @@ static int csky_fb_ioctl(struct fb_info *fbinfo,
 		ret = csky_fb_wait_for_vsync(fbinfo);
 		break;
 
-	case CSKY_FBIO_SET_COLOR_FMT:
+	case CSKY_FBIO_SET_PIXEL_FMT:
 		{
 			enum csky_fb_pixel_format fmt;
 
@@ -286,6 +373,10 @@ static int csky_fb_map_video_memory(struct fb_info *fbinfo)
 	memset(fbinfo->screen_base, 0, map_size);
 	fbinfo->fix.smem_start = map_dma;
 	fbinfo->fix.smem_len = map_size;
+
+	info->pbase_yuv.y = fbinfo->fix.smem_start;
+	info->pbase_yuv.u = info->pbase_yuv.y;
+	info->pbase_yuv.v = info->pbase_yuv.y;
 	return 0;
 }
 
@@ -300,72 +391,12 @@ static inline void csky_fb_unmap_video_memory(struct fb_info *fbinfo)
 	return;
 }
 
-static void csky_fb_set_lcdaddr(struct fb_info *fbinfo)
-{
-	struct csky_fb_info *info = fbinfo->par;
-
-	printk("LCD_PBASE = 0x%X\n", fbinfo->fix.smem_start);
-	writel(fbinfo->fix.smem_start, info->iobase + CSKY_LCD_PBASE);
-	return;
-}
-
-static int csky_fb_init_registers(struct fb_info *fbinfo)
-{
-	struct csky_fb_info *info = fbinfo->par;
-	u32 videosize;
-
-	u32 control = CSKY_LCDCON_DFS_RGB |
-		      CSKY_LCDCON_OUT_24BIT |
-		      CSKY_LCDCON_WML_8WORD |
-		      CSKY_LCDCON_VBL_16CYCLES |
-		      CSKY_LCDCON_PAS_TFT;
-	u32 timing0 = (((info->vm.hback_porch - 1) & 0xff) << 24) |
-		      (((info->vm.hfront_porch - 1) & 0xff) << 16) |
-		      (((info->vm.hsync_len - 1) & 0x3f) << 10) |
-		      ((info->vm.hactive - 1) & 0x3ff);
-	u32 timing1 = (((info->vm.vback_porch - 1) & 0xff) << 24) |
-		      (((info->vm.vfront_porch - 1) & 0xff) << 16) |
-		      (((info->vm.vsync_len - 1) & 0x3f) << 10) |
-		      ((info->vm.vactive - 1) & 0x3ff);
-	u32 timing2 = 0;
-
-	if (info->pixel_clock_pol)
-		timing2 |= CSKY_LCDTIM2_PCP_FALLING;
-	if (info->hsync_pulse_pol)
-		timing2 |= CSKY_LCDTIM2_HSP_ACT_LOW;
-	if (info->vsync_pulse_pol)
-		timing2 |= CSKY_LCDTIM2_VSP_ACT_LOW;
-	if (info->pixel_clk_src)
-		timing2 |= CSKY_LCDTIM2_CLKS_EXT;
-	timing2 |= info->pcd & 0xff;
-
-	writel(control, info->iobase + CSKY_LCD_CONTROL);
-	writel(timing0, info->iobase + CSKY_LCD_TIMING0);
-	writel(timing1, info->iobase + CSKY_LCD_TIMING1);
-	writel(timing2, info->iobase + CSKY_LCD_TIMING2);
-
-	/* disable all the lcdc interrupts */
-	writel(0x0, info->iobase + CSKY_LCD_INT_MASK);
-
-	videosize = ((info->vm.vactive - 1) << 11) |
-		    (info->vm.hactive - 1);
-	writel(videosize, info->iobase + CSKY_LCD_VIDEOSIZE);
-
-	csky_fb_set_lcdaddr(fbinfo);
-
-	/* enable lcdc */
-	control = readl(info->iobase + CSKY_LCD_CONTROL);
-	control |= CSKY_LCDCON_LEN;
-	writel(control, info->iobase + CSKY_LCD_CONTROL);
-	return 0;
-}
-
 static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 {
 	struct csky_fb_info *info = dev_id;
 	unsigned long status;
 
-	spin_lock(&info->slock);
+	raw_spin_lock(&info->slock);
 
 	status = readl(info->iobase + CSKY_LCD_INT_STAT);
 	/* clear interrupts */
@@ -390,7 +421,7 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 		printk("LCD_INT: Line FIFO underrun\n");
 	}
 
-	spin_unlock(&info->slock);
+	raw_spin_unlock(&info->slock);
 	return IRQ_HANDLED;
 }
 
@@ -399,6 +430,10 @@ static int csky_fb_probe(struct platform_device *pdev)
 	int irq;
 	struct resource *mem;
 	void __iomem *iobase;
+#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
+	struct resource *mem_chip_ctrl;
+	void __iomem *iobase_chip_ctrl;
+#endif
 	u32 bits_per_pixel;
 	u32 pixel_clk_src; /* pixel clock source */
 	u32 pcd; /* pixel clock divider. f=HCLK/2(pcd+1) */
@@ -422,6 +457,13 @@ static int csky_fb_probe(struct platform_device *pdev)
 	if (IS_ERR(iobase))
 		return PTR_ERR(iobase);
 
+#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
+	mem_chip_ctrl = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	iobase_chip_ctrl = devm_ioremap_resource(dev, mem_chip_ctrl);
+	if (IS_ERR(iobase_chip_ctrl))
+		return PTR_ERR(iobase_chip_ctrl);
+#endif
+
 	ret = of_property_read_u32(dev->of_node, "bits-per-pixel",
 				   &bits_per_pixel);
 	if (ret < 0) {
@@ -429,7 +471,8 @@ static int csky_fb_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = of_property_read_u32(dev->of_node, "pixel-clock-source", &pixel_clk_src);
+	ret = of_property_read_u32(dev->of_node,
+				   "pixel-clock-source", &pixel_clk_src);
 	if (ret < 0) {
 		printk("error! failed to get property pixel-clock-source\n");
 		return ret;
@@ -441,19 +484,22 @@ static int csky_fb_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = of_property_read_u32(dev->of_node, "hsync-pulse-pol", &hsync_pulse_pol);
+	ret = of_property_read_u32(dev->of_node,
+				   "hsync-pulse-pol", &hsync_pulse_pol);
 	if (ret < 0) {
 		printk("error! failed to get property hsync-pulse-pol\n");
 		return ret;
 	}
 
-	ret = of_property_read_u32(dev->of_node, "vsync-pulse-pol", &vsync_pulse_pol);
+	ret = of_property_read_u32(dev->of_node,
+				   "vsync-pulse-pol", &vsync_pulse_pol);
 	if (ret < 0) {
 		printk("error! failed to get property vsync-pulse-pol\n");
 		return ret;
 	}
 
-	ret = of_property_read_u32(dev->of_node, "pixel-clock-pol", &pixel_clock_pol);
+	ret = of_property_read_u32(dev->of_node,
+				   "pixel-clock-pol", &pixel_clock_pol);
 	if (ret < 0) {
 		printk("error! failed to get property pixel-clock-pol\n");
 		return ret;
@@ -477,6 +523,9 @@ static int csky_fb_probe(struct platform_device *pdev)
 	spin_lock_init(&info->slock);
 	info->dev = &pdev->dev;
 	info->iobase = iobase;
+#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
+	info->iobase_chip_ctrl = iobase_chip_ctrl;
+#endif
 	info->irq = irq;
 	memcpy(&info->vm, &vm, sizeof(vm));
 	info->pixel_clk_src = pixel_clk_src;
@@ -485,6 +534,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 	info->vsync_pulse_pol = vsync_pulse_pol;
 	info->pixel_clock_pol = pixel_clock_pol;
 	init_waitqueue_head(&info->vsync_info.wait);
+	info->pixel_fmt = CSKY_LCDCON_DFS_RGB;
 
 	strcpy(fbinfo->fix.id, DRIVER_NAME);
 	fbinfo->fix.smem_len = vm.hactive * vm.vactive *
@@ -524,27 +574,10 @@ static int csky_fb_probe(struct platform_device *pdev)
 		goto RELEASE_FBINFO;
 	}
 
-#if 1
-{
-	u32 i, j;
-	memset(fbinfo->screen_base, 0, 800*480*4);
-	j=0;
-	for (i=0;i<800;i++)
-		*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x00ff0000;
-	j=479;
-	for (i=0;i<800;i++)
-		*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x00ff0000;
-	i=0;
-	for (j=0;j<480;j++)
-		*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x00ff0000;
-	i=799;
-	for (j=0;j<480;j++)
-		*(unsigned int *)(fbinfo->screen_base + (j*800+i)*4) = 0x00ff0000;
-}
-#endif
+	csky_fb_check_var(&fbinfo->var, fbinfo);
+
 	csky_fb_init_registers(fbinfo);
 
-	csky_fb_check_var(&fbinfo->var, fbinfo);
 	ret = register_framebuffer(fbinfo);
 	if (ret < 0) {
 		printk("error! Failed to register framebuffer device\n");
@@ -557,8 +590,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 		goto UNREGISTER_FB;
 	}
 
-	printk("fb%d: %s frame buffer device\n",
-		fbinfo->node, fbinfo->fix.id);
+	printk("fb%d: %s frame buffer device\n", fbinfo->node, fbinfo->fix.id);
 	return 0;
 
 UNREGISTER_FB:
@@ -575,13 +607,13 @@ static int csky_fb_remove(struct platform_device *pdev)
 	struct fb_info *fbinfo = platform_get_drvdata(pdev);
 	struct csky_fb_info *info = fbinfo->par;
 
-	csky_fb_lcd_enable(info, false);
+	csky_fb_lcd_reset(info);
+
+	free_irq(info->irq, info);
 
 	unregister_framebuffer(fbinfo);
 
 	csky_fb_unmap_video_memory(fbinfo);
-
-	free_irq(info->irq, info);
 
 	platform_set_drvdata(pdev, NULL);
 

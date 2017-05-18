@@ -6,6 +6,12 @@
 #include <video/of_videomode.h>
 #include <video/videomode.h>
 
+/*
+ * FIXME:
+ * This is a temporary way to reset LCDC.
+ * It must be removed when reset driver is implemented.
+ */
+#define RESET_LCDC_WITHOUT_RESET_DRIVER
 
 /* LCDC registers */
 #define CSKY_LCD_CONTROL	0x00
@@ -125,7 +131,7 @@ struct csky_fb_vsync {
 };
 
 #define CSKY_FBIO_BASE	0x30
-#define CSKY_FBIO_SET_COLOR_FMT	_IOW('F', CSKY_FBIO_BASE+0, \
+#define CSKY_FBIO_SET_PIXEL_FMT	_IOW('F', CSKY_FBIO_BASE+0, \
 					enum csky_fb_pixel_format)
 #define CSKY_FBIO_SET_PBASE_YUV	_IOW('F', CSKY_FBIO_BASE+1, \
 					struct csky_fb_lcd_pbase_yuv)
@@ -147,17 +153,21 @@ struct csky_fb_info {
 	spinlock_t slock;
 	struct device *dev;
 	void __iomem *iobase;
+#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
+	void __iomem *iobase_chip_ctrl;
+#endif
 	int irq;
 	struct clk *clk;
 	struct videomode vm;
-	u32 pixel_clk_src; /* pixel clock source */
-	u32 pcd; /* pixel clock divider. f=HCLK/2(pcd+1) */
-	u32 hsync_pulse_pol; /* HSYNC pulse polarity */
-	u32 vsync_pulse_pol; /* VSYNC pulse polarity */
-	u32 pixel_clock_pol; /* pixel clock polarity */
+	u32 pixel_clk_src;	/* pixel clock source */
+	u32 pcd;		/* pixel clock divider. f=HCLK/2(pcd+1) */
+	u32 hsync_pulse_pol;	/* HSYNC pulse polarity */
+	u32 vsync_pulse_pol;	/* VSYNC pulse polarity */
+	u32 pixel_clock_pol;	/* pixel clock polarity */
 	struct csky_fb_vsync vsync_info;
 	enum csky_fb_pixel_format pixel_fmt;
 	struct csky_fb_lcd_pbase_yuv pbase_yuv;
+	bool lcdc_enabled;	/* indicate whether the lcdc is enabled */
 };
 
 #endif /* __CSKY_FB_H__ */
