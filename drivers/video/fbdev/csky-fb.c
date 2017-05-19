@@ -321,6 +321,14 @@ static int csky_fb_ioctl(struct fb_info *fbinfo,
 			break;
 		}
 
+	case CSKY_FBIO_GET_PIXEL_FMT:
+		{
+			if (copy_to_user(argp, &info->pixel_fmt,
+					 sizeof(info->pixel_fmt)))
+				ret = -EFAULT;
+			break;
+		}
+
 	case CSKY_FBIO_SET_PBASE_YUV:
 		{
 			struct csky_fb_lcd_pbase_yuv base;
