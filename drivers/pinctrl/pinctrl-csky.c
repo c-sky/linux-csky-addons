@@ -30,10 +30,9 @@
 #include <linux/irqchip/chained_irq.h>
 #include <linux/regmap.h>
 #include <linux/mfd/syscon.h>
-//#include <dt-bindings/pinctrl/csky.h>
 
-#include "../../../drivers/pinctrl/core.h"
-#include "../../../drivers/pinctrl/pinconf.h"
+#include <../../../drivers/pinctrl/core.h>
+#include <../../../drivers/pinctrl/pinconf.h>
 
 #include "pinctrl-csky.h"
 
@@ -41,6 +40,7 @@
 /* GPIO control registers */
 #define GPIO_SWPORT_DR		0x00
 #define GPIO_SWPORT_DDR		0x04
+#define GPIO_PORT_CTL		0x08
 #define GPIO_INTEN		0x30
 #define GPIO_INTMASK		0x34
 #define GPIO_INTTYPE_LEVEL	0x38
@@ -52,61 +52,16 @@
 #define GPIO_EXT_PORT		0x50
 #define GPIO_LS_SYNC		0x60
 
+/* GPIO irq numbers */
+#define GPIO0_IRQS 0
+#define GPIO1_IRQS 1
+#define GPIO2_IRQS 2
+#define GPIO3_IRQS 3
+
+
+
 enum csky_pinctrl_type {
 	ERAGON,
-};
-
-/**
- * Encode variants of iomux registers into a type variable
- */
-#define IOMUX_GPIO_ONLY		BIT(0)
-#define IOMUX_WIDTH_4BIT	BIT(1)
-#define IOMUX_SOURCE_PMU	BIT(2)
-#define IOMUX_UNROUTED		BIT(3)
-
-/**
- * @type: iomux variant using IOMUX_* constants
- * @offset: if initialized to -1 it will be autocalculated, by specifying
- *	    an initial offset value the relevant source offset can be reset
- *	    to a new value for autocalculating the following iomux registers.
- */
-struct csky_iomux {
-	int	type;
-	int	offset;
-};
-
-/**
- * enum type index corresponding to csky_perpin_drv_list arrays index.
- */
-enum csky_pin_drv_type {
-	DRV_TYPE_IO_DEFAULT = 0,
-	DRV_TYPE_IO_1V8_OR_3V0,
-	DRV_TYPE_IO_1V8_ONLY,
-	DRV_TYPE_IO_1V8_3V0_AUTO,
-	DRV_TYPE_IO_3V3_ONLY,
-	DRV_TYPE_MAX
-};
-
-/**
- * enum type index corresponding to csky_pull_list arrays index.
- */
-enum csky_pin_pull_type {
-	PULL_TYPE_IO_DEFAULT = 0,
-	PULL_TYPE_IO_1V8_ONLY,
-	PULL_TYPE_MAX
-};
-
-/**
- * @drv_type: drive strength variant using csky_perpin_drv_type
- * @offset: if initialized to -1 it will be autocalculated, by specifying
- *	    an initial offset value the relevant source offset can be reset
- *	    to a new value for autocalculating the following drive strength
- *	    registers. if used chips own cal_drv func instead to calculate
- *	    registers offset, the variant could be ignored.
- */
-struct csky_drv {
-	enum csky_pin_drv_type	drv_type;
-	int			offset;
 };
 
 /**
@@ -138,9 +93,6 @@ struct csky_pin_bank {
 	u8				nr_pins;
 	char				*name;
 	u8				bank_num;
-//	struct csky_iomux		iomux[4];
-//	struct csky_drv			drv[4];
-	enum csky_pin_pull_type		pull_type[4];
 	bool				valid;
 	struct device_node		*of_node;
 	struct csky_pinctrl		*drvdata;
@@ -158,8 +110,6 @@ struct csky_pin_bank {
 		.name		= label,	\
 	}
 
-/**
- */
 struct csky_pin_ctrl {
 	struct csky_pin_bank	*pin_banks;
 	u32			nr_banks;
@@ -167,17 +117,6 @@ struct csky_pin_ctrl {
 	char			*label;
 	enum csky_pinctrl_type	type;
 	u32			mux_regs[4];
-//	int			grf_mux_offset;
-//	int			pmu_mux_offset;
-//	int			grf_drv_offset;
-//	int			pmu_drv_offset;
-
-//	void	(*pull_calc_reg)(struct csky_pin_bank *bank,
-//				 int pin_num, struct regmap **regmap,
-//				 int *reg, u8 *bit);
-//	void	(*drv_calc_reg)(struct csky_pin_bank *bank,
-//				int pin_num, struct regmap **regmap,
-//				int *reg, u8 *bit);
 };
 
 struct csky_pin_config {
@@ -398,138 +337,31 @@ static int csky_get_mux(struct csky_pin_bank *bank, int pin)
  */
 static int csky_set_mux(struct csky_pin_bank *bank, int pin, int mux)
 {
+	u32 data, rmask;
+
+	if (pin > 7)
+		return -EINVAL;
+
+	if (mux == CSKY_FUNC_GPIO) {
+		rmask = BIT(pin);
+		data = readl_relaxed(bank->reg_base + GPIO_PORT_CTL);
+		data &= ~rmask;
+		writel_relaxed(data, bank->reg_base + GPIO_PORT_CTL);
+	} else {
+		rmask = BIT(pin);
+		data = readl_relaxed(bank->reg_base + GPIO_PORT_CTL);
+		data |= rmask;
+		writel_relaxed(data, bank->reg_base + GPIO_PORT_CTL);
+	}
+
 	return 0;
 }
 
 #define ERAGON_PULL_OFFSET		0x164
-#define ERAGON_PULL_BITS_PER_PIN	2
+#define ERAGON_PULL_BITS_PER_PIN	1
 #define ERAGON_PULL_PINS_PER_REG	8
 #define ERAGON_PULL_BANK_STRIDE		16
 #define ERAGON_PULL_PMU_OFFSET		0x64
-
-static void eragon_calc_pull_reg_and_bit(struct csky_pin_bank *bank,
-					 int pin_num, struct regmap **regmap,
-					 int *reg, u8 *bit)
-{
-	//struct csky_pinctrl *info = bank->drvdata;
-}
-
-#if 0
-static int csky_perpin_drv_list[DRV_TYPE_MAX][8] = {
-	{ 2, 4, 8, 12, -1, -1, -1, -1 },
-	{ 3, 6, 9, 12, -1, -1, -1, -1 },
-	{ 5, 10, 15, 20, -1, -1, -1, -1 },
-	{ 4, 6, 8, 10, 12, 14, 16, 18 },
-	{ 4, 7, 10, 13, 16, 19, 22, 26 }
-};
-#endif
-static int csky_get_drive_perpin(struct csky_pin_bank *bank,
-				 int pin_num)
-{
-	return 0;
-}
-
-static int csky_set_drive_perpin(struct csky_pin_bank *bank,
-				 int pin_num, int strength)
-{
-	return 0;
-}
-
-static int csky_pull_list[PULL_TYPE_MAX][4] = {
-	{
-		PIN_CONFIG_BIAS_DISABLE,
-		PIN_CONFIG_BIAS_PULL_UP,
-		PIN_CONFIG_BIAS_PULL_DOWN,
-		PIN_CONFIG_BIAS_BUS_HOLD
-	},
-	{
-		PIN_CONFIG_BIAS_DISABLE,
-		PIN_CONFIG_BIAS_PULL_DOWN,
-		PIN_CONFIG_BIAS_DISABLE,
-		PIN_CONFIG_BIAS_PULL_UP
-	},
-};
-
-static int csky_get_pull(struct csky_pin_bank *bank, int pin_num)
-{
-	struct csky_pinctrl *info = bank->drvdata;
-	struct csky_pin_ctrl *ctrl = info->ctrl;
-	struct regmap *regmap;
-	int reg, ret, pull_type;
-	u8 bit;
-	u32 data;
-
-	//ctrl->pull_calc_reg(bank, pin_num, &regmap, &reg, &bit);
-
-	ret = regmap_read(regmap, reg, &data);
-	if (ret)
-		return ret;
-
-	switch (ctrl->type) {
-	case ERAGON:
-		pull_type = bank->pull_type[pin_num / 8];
-		data >>= bit;
-		data &= (1 << ERAGON_PULL_BITS_PER_PIN) - 1;
-
-		return csky_pull_list[pull_type][data];
-	default:
-		dev_err(info->dev, "unsupported pinctrl type\n");
-		return -EINVAL;
-	};
-}
-
-static int csky_set_pull(struct csky_pin_bank *bank,
-			 int pin_num, int pull)
-{
-	struct csky_pinctrl *info = bank->drvdata;
-	struct csky_pin_ctrl *ctrl = info->ctrl;
-	struct regmap *regmap;
-	int reg, ret, i, pull_type;
-	unsigned long flags;
-	u8 bit;
-	u32 data, rmask;
-
-	dev_dbg(info->dev, "setting pull of GPIO%d-%d to %d\n",
-		bank->bank_num, pin_num, pull);
-
-	//ctrl->pull_calc_reg(bank, pin_num, &regmap, &reg, &bit);
-
-	switch (ctrl->type) {
-	case ERAGON:
-		pull_type = bank->pull_type[pin_num / 8];
-		ret = -EINVAL;
-		for (i = 0; i < ARRAY_SIZE(csky_pull_list[pull_type]);
-			i++) {
-			if (csky_pull_list[pull_type][i] == pull) {
-				ret = i;
-				break;
-			}
-		}
-
-		if (ret < 0) {
-			dev_err(info->dev, "unsupported pull setting %d\n",
-				pull);
-			return ret;
-		}
-
-		spin_lock_irqsave(&bank->slock, flags);
-
-		/* enable the write to the equivalent lower bits */
-		data = ((1 << ERAGON_PULL_BITS_PER_PIN) - 1) << (bit + 16);
-		rmask = data | (data >> 16);
-		data |= (ret << bit);
-
-		ret = regmap_update_bits(regmap, reg, rmask, data);
-
-		spin_unlock_irqrestore(&bank->slock, flags);
-		break;
-	default:
-		dev_err(info->dev, "unsupported pinctrl type\n");
-		return -EINVAL;
-	}
-
-	return ret;
-}
 
 /*
  * Pinmux_ops handling
@@ -666,21 +498,6 @@ static const struct pinmux_ops csky_pmx_ops = {
 	.gpio_set_direction	= csky_pmx_gpio_set_direction,
 };
 
-/*
- * Pinconf_ops handling
- */
-
-static bool csky_pinconf_pull_valid(struct csky_pin_ctrl *ctrl,
-				    enum pin_config_param pull)
-{
-	switch (ctrl->type) {
-	case ERAGON:
-		return (pull != PIN_CONFIG_BIAS_PULL_PIN_DEFAULT);
-	}
-
-	return false;
-}
-
 static void csky_gpio_set(struct gpio_chip *gc, unsigned offset, int value);
 static int csky_gpio_get(struct gpio_chip *gc, unsigned offset);
 
@@ -688,58 +505,6 @@ static int csky_gpio_get(struct gpio_chip *gc, unsigned offset);
 static int csky_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
 			    unsigned long *configs, unsigned num_configs)
 {
-	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
-	struct csky_pin_bank *bank = pin_to_bank(info, pin);
-	enum pin_config_param param;
-	u16 arg;
-	int i;
-	int rc;
-
-	for (i = 0; i < num_configs; i++) {
-		param = pinconf_to_config_param(configs[i]);
-		arg = pinconf_to_config_argument(configs[i]);
-
-		switch (param) {
-		case PIN_CONFIG_BIAS_DISABLE:
-			rc =  csky_set_pull(bank, pin - bank->pin_base,
-					    param);
-			if (rc)
-				return rc;
-			break;
-		case PIN_CONFIG_BIAS_PULL_UP:
-		case PIN_CONFIG_BIAS_PULL_DOWN:
-		case PIN_CONFIG_BIAS_PULL_PIN_DEFAULT:
-		case PIN_CONFIG_BIAS_BUS_HOLD:
-			if (!csky_pinconf_pull_valid(info->ctrl, param))
-				return -ENOTSUPP;
-
-			if (!arg)
-				return -EINVAL;
-
-			rc = csky_set_pull(bank, pin - bank->pin_base, param);
-			if (rc)
-				return rc;
-			break;
-		case PIN_CONFIG_OUTPUT:
-			csky_gpio_set(&bank->gpio_chip,
-				      pin - bank->pin_base, arg);
-			rc = _csky_pmx_gpio_set_direction(&bank->gpio_chip,
-				      pin - bank->pin_base, false);
-			if (rc)
-				return rc;
-			break;
-		case PIN_CONFIG_DRIVE_STRENGTH:
-			rc = csky_set_drive_perpin(bank,
-						   pin - bank->pin_base, arg);
-			if (rc < 0)
-				return rc;
-			break;
-		default:
-			return -ENOTSUPP;
-			break;
-		}
-	} /* for each config */
-
 	return 0;
 }
 
@@ -747,56 +512,6 @@ static int csky_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
 static int csky_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
 			    unsigned long *config)
 {
-	struct csky_pinctrl *info = pinctrl_dev_get_drvdata(pctldev);
-	struct csky_pin_bank *bank = pin_to_bank(info, pin);
-	enum pin_config_param param = pinconf_to_config_param(*config);
-	u16 arg;
-	int rc;
-
-	switch (param) {
-	case PIN_CONFIG_BIAS_DISABLE:
-		if (csky_get_pull(bank, pin - bank->pin_base) != param)
-			return -EINVAL;
-
-		arg = 0;
-		break;
-	case PIN_CONFIG_BIAS_PULL_UP:
-	case PIN_CONFIG_BIAS_PULL_DOWN:
-	case PIN_CONFIG_BIAS_PULL_PIN_DEFAULT:
-	case PIN_CONFIG_BIAS_BUS_HOLD:
-		if (!csky_pinconf_pull_valid(info->ctrl, param))
-			return -ENOTSUPP;
-
-		if (csky_get_pull(bank, pin - bank->pin_base) != param)
-			return -EINVAL;
-
-		arg = 1;
-		break;
-	case PIN_CONFIG_OUTPUT:
-		rc = csky_get_mux(bank, pin - bank->pin_base);
-		if (rc != CSKY_FUNC_GPIO)
-			return -EINVAL;
-
-		rc = csky_gpio_get(&bank->gpio_chip, pin - bank->pin_base);
-		if (rc < 0)
-			return rc;
-
-		arg = rc ? 1 : 0;
-		break;
-	case PIN_CONFIG_DRIVE_STRENGTH:
-		rc = csky_get_drive_perpin(bank, pin - bank->pin_base);
-		if (rc < 0)
-			return rc;
-
-		arg = rc;
-		break;
-	default:
-		return -ENOTSUPP;
-		break;
-	}
-
-	*config = pinconf_to_config_packed(param, arg);
-
 	return 0;
 }
 
@@ -1328,6 +1043,24 @@ static int csky_interrupts_register(struct platform_device *pdev,
 						     bank->nr_pins,
 						     &irq_generic_chip_ops,
 						     NULL);
+		switch (i) {
+		case 0:
+			bank->irq = GPIO0_IRQS;
+			break;
+		case 1:
+			bank->irq = GPIO1_IRQS;
+			break;
+		case 2:
+			bank->irq = GPIO2_IRQS;
+			break;
+		case 3:
+			bank->irq = GPIO3_IRQS;
+			break;
+		default:
+			dev_err(&pdev->dev,
+				"The GPIO irqs is wrong !\n");
+			return -1;
+		}
 		if (!bank->domain) {
 			dev_warn(&pdev->dev,
 				 "could not init irq domain for bank %s\n",
@@ -1414,7 +1147,9 @@ static int csky_gpiolib_register(struct platform_device *pdev,
 		}
 	}
 
-	csky_interrupts_register(pdev, info);
+	ret = csky_interrupts_register(pdev, info);
+	if (ret < 0)
+		goto fail;
 
 	return 0;
 
@@ -1447,7 +1182,6 @@ static int csky_get_bank_data(struct csky_pin_bank *bank,
 			      struct csky_pinctrl *info)
 {
 	struct resource res;
-//	void __iomem *base;
 
 	if (!of_device_is_compatible(bank->of_node, "csky,eragon-gpio-bank")) {
 		dev_err(info->dev, "Only 'eragon-gpio-bank' is supported\n");
@@ -1462,8 +1196,6 @@ static int csky_get_bank_data(struct csky_pin_bank *bank,
 	bank->reg_base = devm_ioremap_resource(info->dev, &res);
 	if (IS_ERR(bank->reg_base))
 		return PTR_ERR(bank->reg_base);
-
-	bank->irq = irq_of_parse_and_map(bank->of_node, 0);
 
 	return 0;
 }
@@ -1545,9 +1277,6 @@ static int csky_pinctrl_probe(struct platform_device *pdev)
 	struct csky_pinctrl *info;
 	struct device *dev = &pdev->dev;
 	struct csky_pin_ctrl *ctrl;
-	//struct device_node *np = pdev->dev.of_node;
-	//struct resource *res;
-	//void __iomem *base;
 	int ret;
 
 	if (!dev->of_node) {
@@ -1595,8 +1324,6 @@ static struct csky_pin_ctrl eragon_pin_ctrl = {
 	.nr_banks	= ARRAY_SIZE(eragon_pin_banks),
 	.label		= "ERAGON-GPIO",
 	.type		= ERAGON,
-//	.grf_mux_offset	= 0x60,
-//	.pull_calc_reg	= eragon_calc_pull_reg_and_bit,
 };
 
 static const struct of_device_id csky_pinctrl_dt_match[] = {
