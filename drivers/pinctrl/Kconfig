@@ -1,8 +1,6 @@
 #
 # C-SKY Pin control drivers
 #
-config PINCTRL_CSKY
-	bool
 
 menu "Pin Controllers"
 
@@ -12,10 +10,9 @@ config DEBUG_PINCTRL
 	help
 	  Say Y here to add some extra checks and diagnostics to PINCTRL calls.
 
-config PINCTRL_ERAGON
-	bool "C-SKY Eragon SoC pinctrl driver"
+config PINCTRL_CSKY
+	bool "C-SKY pinctrl driver"
 	depends on OF
-	select PINCTRL_CSKY
 	select PINCTRL
 	select PINMUX
 	select PINCONF
