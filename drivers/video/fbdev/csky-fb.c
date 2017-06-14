@@ -584,7 +584,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 
 	csky_fb_check_var(&fbinfo->var, fbinfo);
 
-	csky_fb_init_registers(fbinfo);
+	/* csky_fb_init_registers(fbinfo); */
 
 	ret = register_framebuffer(fbinfo);
 	if (ret < 0) {
