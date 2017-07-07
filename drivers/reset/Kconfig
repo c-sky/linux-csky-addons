@@ -1,0 +1,7 @@
+
+config RESET_CSKY
+	bool "C-SKY Reset Driver"
+	default n
+	help
+	  This enables the reset driver for C-SKY.
+

@@ -120,21 +120,12 @@ static void csky_fb_lcd_enable(struct csky_fb_info *info, bool enable)
 
 static void csky_fb_lcd_reset(struct csky_fb_info *info)
 {
-#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
-#define SWRC1 0x3c /* software reset control register1 */
-#define LCDC_RST (1 << 14)
-	u32 control;
-	control = readl(info->iobase_chip_ctrl + SWRC1);
-	/* reset lcdc */
-	control &= ~LCDC_RST;
-	writel(control, info->iobase_chip_ctrl + SWRC1);
+	reset_control_assert(info->rst);
 	mdelay(1); /* delay >1us */
-	control |= LCDC_RST;
-	writel(control, info->iobase_chip_ctrl + SWRC1);
+	reset_control_deassert(info->rst);
 	mdelay(1);
 
 	info->lcdc_enabled = false;
-#endif
 	return;
 }
 
@@ -438,10 +429,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 	int irq;
 	struct resource *mem;
 	void __iomem *iobase;
-#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
-	struct resource *mem_chip_ctrl;
-	void __iomem *iobase_chip_ctrl;
-#endif
+	struct reset_control *rst;
 	u32 bits_per_pixel;
 	u32 pixel_clk_src; /* pixel clock source */
 	u32 pcd; /* pixel clock divider. f=HCLK/2(pcd+1) */
@@ -465,12 +453,11 @@ static int csky_fb_probe(struct platform_device *pdev)
 	if (IS_ERR(iobase))
 		return PTR_ERR(iobase);
 
-#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
-	mem_chip_ctrl = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	iobase_chip_ctrl = devm_ioremap_resource(dev, mem_chip_ctrl);
-	if (IS_ERR(iobase_chip_ctrl))
-		return PTR_ERR(iobase_chip_ctrl);
-#endif
+	rst = devm_reset_control_get(&pdev->dev, NULL);
+	if (IS_ERR(rst)) {
+		printk("error! failed to get reset control\n");
+		return PTR_ERR(rst);
+	}
 
 	ret = of_property_read_u32(dev->of_node, "bits-per-pixel",
 				   &bits_per_pixel);
@@ -531,9 +518,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 	spin_lock_init(&info->slock);
 	info->dev = &pdev->dev;
 	info->iobase = iobase;
-#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
-	info->iobase_chip_ctrl = iobase_chip_ctrl;
-#endif
+	info->rst = rst;
 	info->irq = irq;
 	memcpy(&info->vm, &vm, sizeof(vm));
 	info->pixel_clk_src = pixel_clk_src;

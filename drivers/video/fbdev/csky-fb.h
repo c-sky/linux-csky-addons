@@ -5,13 +5,7 @@
 #include <video/of_display_timing.h>
 #include <video/of_videomode.h>
 #include <video/videomode.h>
-
-/*
- * FIXME:
- * This is a temporary way to reset LCDC.
- * It must be removed when reset driver is implemented.
- */
-#define RESET_LCDC_WITHOUT_RESET_DRIVER
+#include <linux/reset.h>
 
 /* LCDC registers */
 #define CSKY_LCD_CONTROL	0x00
@@ -155,9 +149,7 @@ struct csky_fb_info {
 	spinlock_t slock;
 	struct device *dev;
 	void __iomem *iobase;
-#ifdef RESET_LCDC_WITHOUT_RESET_DRIVER
-	void __iomem *iobase_chip_ctrl;
-#endif
+	struct reset_control *rst;
 	int irq;
 	struct clk *clk;
 	struct videomode vm;
