@@ -4,5 +4,6 @@ source "addons/drivers/pinctrl/Kconfig"
 source "addons/drivers/vpu/Kconfig"
 source "addons/drivers/video/fbdev/Kconfig"
 source "addons/drivers/reset/Kconfig"
+source "addons/drivers/mailbox/Kconfig"
 endmenu
 
