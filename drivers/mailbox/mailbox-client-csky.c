@@ -30,9 +30,7 @@
 #include "mailbox-csky.h"
 #include "mailbox-csky-internal.h"
 
-#define MBOX_MAX_SIG_LEN	8
 #define MBOX_MAX_MSG_LEN	CSKY_MBOX_MAX_MESSAGE_LENGTH
-
 #define HEXDUMP_BYTES_PER_LINE	16
 #define HEXDUMP_LINE_LEN	((HEXDUMP_BYTES_PER_LINE * 4) + 2)
 #define HEXDUMP_MAX_LEN		(HEXDUMP_LINE_LEN *		\
@@ -41,14 +39,14 @@
 static struct dentry *root_debugfs_dir;
 
 struct mbox_client_csky_device {
-	struct device			*dev;
-	void __iomem			*tx_mmio;
-	void __iomem			*rx_mmio;
-	struct mbox_chan		*tx_channel;
-	struct mbox_chan		*rx_channel;
-	char				*rx_buffer;
-	struct mbox_csky_message	*message;
-	spinlock_t			lock;
+	struct device		*dev;
+	void __iomem		*tx_mmio;
+	void __iomem		*rx_mmio;
+	struct mbox_chan	*tx_channel;
+	struct mbox_chan	*rx_channel;
+	char			*rx_buffer;
+	struct mbox_message	*message;
+	spinlock_t		lock;
 };
 
 static ssize_t mbox_client_csky_message_write(struct file *filp,
@@ -75,7 +73,7 @@ static ssize_t mbox_client_csky_message_write(struct file *filp,
 	if (!tdev->message)
 		return -ENOMEM;
 
-	/* Fill message according to struct mbox_csky_message format */
+	/* Fill message according to struct mbox_message format */
 	tdev->message->mssg_type = CSKY_MBOX_MSSG_DATA;
 	tdev->message->length = count;
 	ret = copy_from_user(tdev->message->data, userbuf, count);
@@ -160,7 +158,7 @@ static const struct file_operations mbox_client_csky_message_ops = {
 
 static int index_names = 0;
 static bool debugfs_dir_created = false;
-static const char* message_names[] = {"message0", "message1"};
+static const char* file_names[] = {"mbox-client0", "mbox-client1"};
 
 static int mbox_client_csky_add_debugfs(struct platform_device *pdev,
 					struct mbox_client_csky_device *tdev)
@@ -183,7 +181,7 @@ static int mbox_client_csky_add_debugfs(struct platform_device *pdev,
 		debugfs_dir_created = true;
 	}
 
-	debugfs_create_file(message_names[index_names], 0600, root_debugfs_dir,
+	debugfs_create_file(file_names[index_names], 0600, root_debugfs_dir,
 			    tdev, &mbox_client_csky_message_ops);
 
 	index_names++;
@@ -196,20 +194,18 @@ static void mbox_client_csky_receive_message(struct mbox_client *client,
 	struct mbox_client_csky_device *tdev = dev_get_drvdata(client->dev);
 	unsigned long flags;
 
-	spin_lock_irqsave(&tdev->lock, flags);
-	if (tdev->rx_mmio) {
-		memcpy_fromio(tdev->rx_buffer,
-			      tdev->rx_mmio,
-			      MBOX_MAX_MSG_LEN);
-		print_hex_dump_bytes("Client: Received [MMIO]: ",
-				     DUMP_PREFIX_ADDRESS,
-				     tdev->rx_buffer, MBOX_MAX_MSG_LEN);
-	} else if (message) {
-		print_hex_dump_bytes("Client: Received [API]: ",
-				     DUMP_PREFIX_ADDRESS,
-				     message, MBOX_MAX_MSG_LEN);
-		memcpy(tdev->rx_buffer, message, MBOX_MAX_MSG_LEN);
+	if (tdev->rx_mmio == NULL) {
+		dev_err(client->dev, "rx_mmio is NULL\n");
+		return;
 	}
+
+	spin_lock_irqsave(&tdev->lock, flags);
+	memcpy_fromio(tdev->rx_buffer, tdev->rx_mmio, MBOX_MAX_MSG_LEN);
+#ifdef DEBUG
+	print_hex_dump_bytes("Client: Received [MMIO]: ",
+			     DUMP_PREFIX_ADDRESS,
+			     tdev->rx_buffer, MBOX_MAX_MSG_LEN);
+#endif
 	spin_unlock_irqrestore(&tdev->lock, flags);
 }
 
@@ -258,6 +254,7 @@ mbox_client_csky_request_channel(struct platform_device *pdev,
 
 	channel = mbox_request_channel_byname(client, name);
 	if (IS_ERR(channel)) {
+		devm_kfree(&pdev->dev, client);
 		dev_warn(&pdev->dev, "Failed to request %s channel\n", name);
 		return NULL;
 	}

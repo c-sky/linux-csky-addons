@@ -18,7 +18,6 @@
 #ifndef __MAILBOX_CSKY_H
 #define __MAILBOX_CSKY_H
 
-#define DRIVER_NAME			"mailbox-csky"
 #define CSKY_MBOX_DEV_ID0		0
 #define CSKY_MBOX_DEV_ID1		1
 

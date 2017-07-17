@@ -18,8 +18,6 @@
 #ifndef __MAILBOX_CSKY_INTERNAL_H
 #define __MAILBOX_CSKY_INTERNAL_H
 
-#include "mailbox-csky.h"
-
 enum mbox_csky_mssg_type {
 	CSKY_MBOX_MSSG_DATA = 'd',	/* Data to receiver */
 	CSKY_MBOX_MSSG_ACK  = 'a',	/* ACK to sender */
@@ -27,14 +25,14 @@ enum mbox_csky_mssg_type {
 
 #define MBOX_CSKY_MSSG_HEAD_LENGTH 4
 /**
- * struct mbox_csky_message - Description of a message that send to mailbox
+ * struct mbox_message - Description of a message that send to mailbox
  * @mssg_type:	The message type that transfer, refer to mbox_csky_mssg_type
  * @length:	Then data length, must <= CSKY_MBOX_MAX_DATA_LENGTH
  * @reserved0:	Undefined
  * @reserved1:	Undefined
  * @data:	The transfer data. Ignore if mssg_type is CSKY_MBOX_MSSG_ACK
  */
-struct mbox_csky_message {
+struct mbox_message {
 	u8 mssg_type;
 	u8 length;
 	u8 reserved0;

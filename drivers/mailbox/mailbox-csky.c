@@ -28,6 +28,8 @@
 #include "mailbox-csky.h"
 #include "mailbox-csky-internal.h"
 
+#define DRIVER_NAME	"mailbox-csky"
+
 /* 0x18 is register length from CSKY_MBOX_INTGR to CSKY_MBOX_INTENB */
 #define MBOX_INTGR_ADDR(mbox)	\
 	(mbox->base + 0x18*(mbox->dev_id ? 0 : 1) + CSKY_MBOX_INTGR)
@@ -85,16 +87,16 @@ static irqreturn_t csky_mbox_interrupt(int irq, void *p)
 {
 	struct csky_mbox *mbox = (struct csky_mbox *)p;
 	struct mbox_chan *chan = &(mbox->chans[0]);
-	struct mbox_csky_message *csky_mssg_rx =
-		(struct mbox_csky_message *)(MBOX_RX_MSSG_ADDR(mbox));
+	struct mbox_message *mssg_rx =
+		(struct mbox_message *)(MBOX_RX_MSSG_ADDR(mbox));
 
 	RX_CLEAR_INTERRUPT(mbox);
 
-	if (csky_mssg_rx->mssg_type == CSKY_MBOX_MSSG_DATA) {
-		struct mbox_csky_message *csky_mssg_tx =
-			(struct mbox_csky_message *)MBOX_TX_MSSG_ADDR(mbox);
+	if (mssg_rx->mssg_type == CSKY_MBOX_MSSG_DATA) {
+		struct mbox_message *mssg_tx =
+			(struct mbox_message *)MBOX_TX_MSSG_ADDR(mbox);
 #ifdef DEBUG
-		u32 *data = (u32 *)csky_mssg_rx;
+		u32 *data = (u32 *)mssg_rx;
 		dev_info(mbox->dev, "Recv data, first 8 bytes:" \
 			"%02x %02x %02x %02x %02x %02x %02x %02x\n",
 			BYTE0(data[0]), BYTE1(data[0]),
@@ -104,18 +106,18 @@ static irqreturn_t csky_mbox_interrupt(int irq, void *p)
 #endif
 
 		/* Receive message's data to upper */
-		mbox_chan_received_data(chan, (void*)(csky_mssg_rx));
+		mbox_chan_received_data(chan, (void*)(mssg_rx));
 
 		/* Send ACK back */
-		csky_mssg_tx->mssg_type = CSKY_MBOX_MSSG_ACK;
+		mssg_tx->mssg_type = CSKY_MBOX_MSSG_ACK;
 		TX_GENERATE_INTERRUPT(mbox);
 	}
-	else if (csky_mssg_rx->mssg_type == CSKY_MBOX_MSSG_ACK) {
+	else if (mssg_rx->mssg_type == CSKY_MBOX_MSSG_ACK) {
 		mbox_chan_txdone(chan, 0);	/* Notify tx done */
 	}
 	else {
 		dev_err(mbox->dev, "Undefined mssg_type:%02x",
-			csky_mssg_rx->mssg_type);
+			mssg_rx->mssg_type);
 	}
 
 	return IRQ_HANDLED;
