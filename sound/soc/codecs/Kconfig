@@ -1,0 +1,7 @@
+
+config SND_CSKY_DUMMY_CODEC
+	tristate "C-SKY I2S Dummy Codec Support"
+	default n
+	help
+	  This is a dummy codec.
+

@@ -4,4 +4,5 @@
 KBUILD_CFLAGS   += -O0
 
 obj-y += drivers/
-
+obj-y += sound/soc/csky/
+obj-y += sound/soc/codecs/

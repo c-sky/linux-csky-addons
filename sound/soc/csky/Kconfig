@@ -1,0 +1,16 @@
+menu "C-SKY Audio support"
+
+config SND_CSKY_I2S
+	tristate "C-SKY I2S Support"
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	default n
+	help
+	  C-SKY I2S Support.
+
+config SND_CSKY_PCM
+	bool "C-SKY PCM Support"
+	select SND_DMAENGINE_PCM
+	default n
+
+endmenu
+
