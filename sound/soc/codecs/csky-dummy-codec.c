@@ -1,8 +1,18 @@
 /*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
+ * C-SKY SoCs Dummy Audio Codec driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/init.h>
@@ -39,8 +49,8 @@ static struct snd_soc_dai_driver dummy_codec_dai = {
 	.name = "csky-dummy-codec-dai",
 	.playback = {
 		.stream_name = "Playback",
-		.channels_min = 2,
-		.channels_max = 2,
+		.channels_min = 1,
+		.channels_max = 384,
 		.rates = STUB_RATES,
 		.formats = STUB_FORMATS,
 	},
@@ -84,6 +94,7 @@ static struct platform_driver dummy_codec_codec_driver = {
 };
 module_platform_driver(dummy_codec_codec_driver);
 
-MODULE_DESCRIPTION("C-SKY dummy codec driver");
-MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("C-SKY SoCs Dummy Audio Codec Driver");
+MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
+MODULE_LICENSE("GPL v2");
 

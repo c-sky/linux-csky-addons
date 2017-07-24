@@ -1,4 +1,10 @@
 /*
+ * C-SKY SoCs LCDC driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -7,7 +13,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
  */
 
 #include <linux/module.h>
@@ -222,8 +227,8 @@ static int csky_fb_check_var(struct fb_var_screeninfo *var,
 		var->transp.offset = 24;
 		break;
 	default:
-		printk("error! bits_per_pixel(%d) not supported\n",
-		       var->bits_per_pixel);
+		dev_err(info->dev, "bits_per_pixel(%d) not supported\n",
+			var->bits_per_pixel);
 		break;
 	}
 	return 0;
@@ -402,7 +407,7 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 	writel(status, info->iobase + CSKY_LCD_INT_STAT);
 
 	if (status & CSKY_LCDINT_STAT_LDD) {
-		printk("LCD_INT: LCD has been disabled\n");
+		dev_info(info->dev, "LCD_INT: LCD has been disabled\n");
 	}
 
 	if (status & CSKY_LCDINT_STAT_BAU) { /* VSYNC interrupt */
@@ -413,11 +418,11 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 	}
 
 	if (status & CSKY_LCDINT_STAT_BER) {
-		printk("LCD_INT: Bus error\n");
+		dev_info(info->dev, "LCD_INT: Bus error\n");
 	}
 
 	if (status & CSKY_LCDINT_STAT_LFU) {
-		printk("LCD_INT: Line FIFO underrun\n");
+		dev_info(info->dev, "LCD_INT: Line FIFO underrun\n");
 	}
 
 	raw_spin_unlock(&info->slock);
@@ -455,54 +460,55 @@ static int csky_fb_probe(struct platform_device *pdev)
 
 	rst = devm_reset_control_get(&pdev->dev, NULL);
 	if (IS_ERR(rst)) {
-		printk("error! failed to get reset control\n");
+		dev_err(&pdev->dev, "Failed to get reset control\n");
 		return PTR_ERR(rst);
 	}
 
 	ret = of_property_read_u32(dev->of_node, "bits-per-pixel",
 				   &bits_per_pixel);
 	if (ret < 0) {
-		printk("error! failed to get property bits-per-pixel\n");
+		dev_err(&pdev->dev, "Failed to get property bits-per-pixel\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(dev->of_node,
 				   "pixel-clock-source", &pixel_clk_src);
 	if (ret < 0) {
-		printk("error! failed to get property pixel-clock-source\n");
+		dev_err(&pdev->dev,
+			"Failed to get property pixel-clock-source\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(dev->of_node, "pcd", &pcd);
 	if (ret < 0) {
-		printk("error! failed to get property pcd\n");
+		dev_err(&pdev->dev, "Failed to get property pcd\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(dev->of_node,
 				   "hsync-pulse-pol", &hsync_pulse_pol);
 	if (ret < 0) {
-		printk("error! failed to get property hsync-pulse-pol\n");
+		dev_err(&pdev->dev, "Failed to get property hsync-pulse-pol\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(dev->of_node,
 				   "vsync-pulse-pol", &vsync_pulse_pol);
 	if (ret < 0) {
-		printk("error! failed to get property vsync-pulse-pol\n");
+		dev_err(&pdev->dev, "Failed to get property vsync-pulse-pol\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(dev->of_node,
 				   "pixel-clock-pol", &pixel_clock_pol);
 	if (ret < 0) {
-		printk("error! failed to get property pixel-clock-pol\n");
+		dev_err(&pdev->dev, "Failed to get property pixel-clock-pol\n");
 		return ret;
 	}
 
 	ret = of_get_videomode(dev->of_node, &vm, OF_USE_NATIVE_MODE);
 	if (ret) {
-		printk("error! failed to get videomode from DT\n");
+		dev_err(&pdev->dev, "Failed to get videomode from DT\n");
 		return ret;
 	}
 
@@ -563,7 +569,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 	/* allocate video memory */
 	ret = csky_fb_map_video_memory(fbinfo);
 	if (ret) {
-		printk("error! Failed to allocate video memory\n");
+		dev_err(&pdev->dev, "Failed to allocate video memory\n");
 		goto RELEASE_FBINFO;
 	}
 
@@ -573,17 +579,18 @@ static int csky_fb_probe(struct platform_device *pdev)
 
 	ret = register_framebuffer(fbinfo);
 	if (ret < 0) {
-		printk("error! Failed to register framebuffer device\n");
+		dev_err(&pdev->dev, "Failed to register framebuffer device\n");
 		goto FREE_VIDEO_MEMORY;
 	}
 
 	ret = request_irq(irq, csky_fb_irq, 0, pdev->name, info);
 	if (ret) {
-		printk("error! cannot get irq %d - err %d\n", irq, ret);
+		dev_err(&pdev->dev, "Failed to get irq %d, err %d\n", irq, ret);
 		goto UNREGISTER_FB;
 	}
 
-	printk("fb%d: %s frame buffer device\n", fbinfo->node, fbinfo->fix.id);
+	dev_info(&pdev->dev, "fb%d: %s frame buffer device\n",
+		 fbinfo->node, fbinfo->fix.id);
 	return 0;
 
 UNREGISTER_FB:
@@ -631,5 +638,6 @@ static struct platform_driver csky_fb_driver = {
 
 module_platform_driver(csky_fb_driver);
 
-MODULE_DESCRIPTION("C-SKY framebuffer driver");
+MODULE_DESCRIPTION("C-SKY SoCs LCDC Driver");
+MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
 MODULE_LICENSE("GPL v2");

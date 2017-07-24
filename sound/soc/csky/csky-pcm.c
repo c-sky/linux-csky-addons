@@ -1,8 +1,20 @@
 /*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
+ * C-SKY SoCs I2S PCM driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
+ * based on soc-generic-dmaengine-pcm.c
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -576,5 +588,7 @@ void csky_snd_dmaengine_pcm_unregister(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(csky_snd_dmaengine_pcm_unregister);
 
-MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("C-SKY SoCs I2S PCM Driver");
+MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
+MODULE_LICENSE("GPL v2");
 

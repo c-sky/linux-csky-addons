@@ -1,3 +1,20 @@
+/*
+ * C-SKY SoCs LCDC driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #ifndef __CSKY_FB_H__
 #define __CSKY_FB_H__
 

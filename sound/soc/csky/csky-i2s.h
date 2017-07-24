@@ -1,3 +1,20 @@
+/*
+ * C-SKY SoCs I2S Controller driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
 #ifndef __CSKY_I2S_H__
 #define __CSKY_I2S_H__
 
@@ -63,6 +80,8 @@
 #define FSSTA_RES16_FIFO24	(1 << 1)
 #define FSSTA_RES24_FIFO16	(2 << 1)
 #define FSSTA_RES24_FIFO24	(3 << 1)
+#define FSSTA_RES_MASK		0x3
+#define FSSTA_RES_SHIFT		1
 #define FSSTA_AFR(x)		((x) << 4)	/* Audio Fundamental Rate */
 #define FSSTA_AFR_MASK		0x3
 #define FSSTA_ARS(x)		((x) << 6)	/* Audio Rate Scale(I2S only) */

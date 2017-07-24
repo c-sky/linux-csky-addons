@@ -1,8 +1,18 @@
 /*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
+ * C-SKY SoCs I2S Controller driver
+ *
+ * Copyright (C) 2017 C-SKY MicroSystems Co.,Ltd.
+ *
+ * Author: Lei Ling <lei_ling@c-sky.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/clk.h>
@@ -139,9 +149,13 @@ static int csky_i2s_hw_params(struct snd_pcm_substream *substream,
 {
 	struct csky_i2s *i2s = snd_soc_dai_get_drvdata(dai);
 	u32 width;
+	u32 val;
 
 	if (params_channels(params) > 2)
 		return -EINVAL;
+
+	val = csky_i2s_readl(i2s, IIS_FSSTA);
+	val &= ~(FSSTA_RES_MASK << FSSTA_RES_SHIFT);
 
 	switch (params_physical_width(params)) {
 	case 16:
@@ -149,12 +163,23 @@ static int csky_i2s_hw_params(struct snd_pcm_substream *substream,
 			width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 		else
 			width = DMA_SLAVE_BUSWIDTH_2_BYTES;
+
+		val |= FSSTA_RES16_FIFO16;
+		break;
+	case 24:
+		width = DMA_SLAVE_BUSWIDTH_3_BYTES;
+		val |= FSSTA_RES24_FIFO24;
+		break;
+	case 32:
+		width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+		val |= FSSTA_RES24_FIFO24;
 		break;
 	default:
 		return -EINVAL;
 	}
 	i2s->playback_dma_data.addr_width = width;
 
+	csky_i2s_writel(i2s, IIS_FSSTA, val);
 	return csky_i2s_set_clk_rate(i2s, params_rate(params),
 				     params_width(params));
 }
@@ -267,7 +292,7 @@ static int csky_i2s_startup(struct snd_pcm_substream *substream,
 }
 
 static void csky_i2s_shutdown(struct snd_pcm_substream *substream,
-			       struct snd_soc_dai *dai)
+			      struct snd_soc_dai *dai)
 {
 }
 
@@ -336,10 +361,11 @@ static struct snd_soc_dai_driver csky_i2s_dai = {
 	.probe = csky_i2s_dai_probe,
 	.playback = {
 		.stream_name = "Playback",
-		.channels_min = 2,
+		.channels_min = 1,
 		.channels_max = 2,
 		.rates = SNDRV_PCM_RATE_8000_96000,
-		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_U16_LE |
+			   SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_U24_LE,
 	},
 	.ops = &csky_i2s_dai_ops,
 	.symmetric_rates = 1,
@@ -443,6 +469,7 @@ static struct platform_driver csky_i2s_driver = {
 };
 module_platform_driver(csky_i2s_driver);
 
-MODULE_DESCRIPTION("C-SKY I2S driver");
-MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("C-SKY SoCs I2S Controller Driver");
+MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
+MODULE_LICENSE("GPL v2");
 
