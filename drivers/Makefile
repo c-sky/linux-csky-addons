@@ -6,3 +6,4 @@ obj-y	+= pinctrl/
 obj-y	+= video/fbdev/
 obj-y	+= reset/
 obj-y	+= mailbox/
+obj-y	+= crypto/

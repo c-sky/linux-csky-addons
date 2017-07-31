@@ -1,0 +1,25 @@
+#
+# CSKY CRYPTOGRAHPIC HW Engine Support
+#
+menuconfig CRYPTO_DEV_CSKY
+    tristate "C-SKY Cryptographic Engine Support"
+    depends on CSKY
+    help
+        This driver interface with the hardware crypto accelerator.
+        Supporting SHA, CRC, AES, TripDES and RSA
+
+if CRYPTO_DEV_CSKY
+
+config CSKY_CRYPTO_AES
+    bool "Support AES Engine Driver"
+
+config CSKY_CRYPTO_TDES
+    bool "Support TDES Engine Driver"
+
+config CSKY_CRYPTO_CRC
+    bool "Support CRC Engine Driver"
+
+config CSKY_CRYPTO_RSA
+    bool "Support RSA Engine Driver"
+
+endif # CRYPTO_DEV_CSKY
