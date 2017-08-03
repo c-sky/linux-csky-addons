@@ -116,7 +116,12 @@ static struct platform_driver csky_reset_driver = {
 		.of_match_table	= csky_reset_dt_ids,
 	},
 };
-module_platform_driver(csky_reset_driver);
+
+static int __init csky_reset_driver_register(void)
+{
+	return platform_driver_register(&csky_reset_driver);
+}
+postcore_initcall(csky_reset_driver_register);
 
 MODULE_DESCRIPTION("C-SKY SoCs Reset Controller Driver");
 MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
