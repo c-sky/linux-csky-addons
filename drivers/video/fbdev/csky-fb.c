@@ -101,26 +101,41 @@ static void csky_fb_set_lcd_pbase(struct csky_fb_info *info,
 	return;
 }
 
-/*
- * enable/disable lcdc
- */
-static void csky_fb_lcd_enable(struct csky_fb_info *info, bool enable)
+static void csky_fb_lcd_enable(struct csky_fb_info *info)
 {
 	u32 control;
-
 	control = readl(info->iobase + CSKY_LCD_CONTROL);
-
-	if (enable) {
-		control |= CSKY_LCDCON_LEN;
-		info->lcdc_enabled = true;
-	}
-	else {
-		control &= ~CSKY_LCDCON_LEN;
-		info->lcdc_enabled = false;
-	}
-
+	control |= CSKY_LCDCON_LEN;
 	writel(control, info->iobase + CSKY_LCD_CONTROL);
-	return;
+	info->lcdc_enabled = true;
+}
+
+#define LCDC_DISABLE_DONE_MAX_DELAY	100	/* in milliseconds */
+
+static void csky_fb_lcd_disable(struct csky_fb_info *info)
+{
+	u32 control;
+	u32 status;
+	int count;
+
+	/* disable lcdc */
+	control = readl(info->iobase + CSKY_LCD_CONTROL);
+	control &= ~CSKY_LCDCON_LEN;
+	writel(control, info->iobase + CSKY_LCD_CONTROL);
+
+	/* wait lcdc disable done */
+	for (count = 0; count < LCDC_DISABLE_DONE_MAX_DELAY; count++) {
+		status = readl(info->iobase + CSKY_LCD_INT_STAT);
+		if (status & CSKY_LCDINT_STAT_LDD) {
+			/* clear interrupt status */
+			writel(CSKY_LCDINT_STAT_LDD,
+			       info->iobase + CSKY_LCD_INT_STAT);
+			break;
+		}
+		mdelay(1);
+	}
+
+	info->lcdc_enabled = false;
 }
 
 static void csky_fb_lcd_reset(struct csky_fb_info *info)
@@ -256,6 +271,7 @@ static int csky_fb_blank(int blank_mode, struct fb_info *fbinfo)
 		/* disable/reset lcdc */
 		if (info->lcdc_enabled) {
 			csky_fb_wait_for_vsync(fbinfo);
+			csky_fb_lcd_disable(info);
 			csky_fb_lcd_reset(info);
 		}
 		break;
@@ -406,23 +422,11 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 	/* clear interrupts */
 	writel(status, info->iobase + CSKY_LCD_INT_STAT);
 
-	if (status & CSKY_LCDINT_STAT_LDD) {
-		dev_info(info->dev, "LCD_INT: LCD has been disabled\n");
-	}
-
 	if (status & CSKY_LCDINT_STAT_BAU) { /* VSYNC interrupt */
 		info->vsync_info.count++;
 		wake_up_interruptible(&info->vsync_info.wait);
 		/* disable vsync interrupt */
 		csky_fb_disable_irq(info, CSKY_LCDINT_MASK_BAU);
-	}
-
-	if (status & CSKY_LCDINT_STAT_BER) {
-		dev_info(info->dev, "LCD_INT: Bus error\n");
-	}
-
-	if (status & CSKY_LCDINT_STAT_LFU) {
-		dev_info(info->dev, "LCD_INT: Line FIFO underrun\n");
 	}
 
 	raw_spin_unlock(&info->slock);
