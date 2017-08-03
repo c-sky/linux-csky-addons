@@ -95,7 +95,6 @@ static int csky_i2s_calc_refclk_div(struct csky_i2s *i2s, unsigned int rate)
 	case 32000:
 	case 48000:
 	case 64000:
-	case 88200:
 	case 96000:
 		ref_clk = 3072000;
 		break;
@@ -103,6 +102,7 @@ static int csky_i2s_calc_refclk_div(struct csky_i2s *i2s, unsigned int rate)
 	case 11025:
 	case 22050:
 	case 44100:
+	case 88200:
 		ref_clk = 2116800;
 		break;
 	default:
@@ -363,7 +363,8 @@ static struct snd_soc_dai_driver csky_i2s_dai = {
 		.stream_name = "Playback",
 		.channels_min = 1,
 		.channels_max = 2,
-		.rates = SNDRV_PCM_RATE_8000_96000,
+		.rates = SNDRV_PCM_RATE_8000_48000 |
+			 SNDRV_PCM_RATE_88200 | SNDRV_PCM_RATE_96000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_U16_LE |
 			   SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_U24_LE,
 	},
