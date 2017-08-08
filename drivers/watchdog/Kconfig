@@ -1,0 +1,12 @@
+#
+# C-SKY watchdog  driver configuration
+#
+
+config CSKY_WDT
+	bool "C-SKY Watchdog Driver"
+	depends on OF
+	select WATCHDOG_CORE
+	select WATCHDOG
+	help
+	  This enables the watchdog driver for C-SKY.
+
