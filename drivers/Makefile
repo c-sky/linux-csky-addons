@@ -8,3 +8,4 @@ obj-y	+= reset/
 obj-y	+= mailbox/
 obj-y	+= crypto/
 obj-y	+= watchdog/
+obj-y	+= clk/csky/
