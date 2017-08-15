@@ -28,6 +28,7 @@
 #include <sound/soc.h>
 #include <sound/soc-dai.h>
 #include "csky-i2s.h"
+#include "../../../drivers/clk/csky/clk.h"
 
 static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 				  unsigned int rate,
@@ -94,7 +95,6 @@ static int csky_i2s_calc_refclk_div(struct csky_i2s *i2s, unsigned int rate)
 	case 16000:
 	case 32000:
 	case 48000:
-	case 64000:
 	case 96000:
 		ref_clk = 3072000;
 		break;
@@ -119,6 +119,33 @@ static int csky_i2s_set_clk_rate(struct csky_i2s *i2s,
 				 unsigned int word_size)
 {
 	int mclk_div, spdifclk_div, fs_div, refclk_div;
+	int ret;
+
+	if (!IS_ERR_OR_NULL(i2s->i2s_clk)) {
+		switch (rate) {
+		case 8000:
+		case 16000:
+		case 32000:
+		case 48000:
+		case 96000:
+			ret = clk_set_rate(i2s->i2s_clk, i2s->clk_fs_48k);
+			if (ret)
+				return ret;
+			i2s->src_clk = clk_get_rate(i2s->i2s_clk);
+			break;
+		case 11025:
+		case 22050:
+		case 44100:
+		case 88200:
+			ret = clk_set_rate(i2s->i2s_clk, i2s->clk_fs_44k);
+			if (ret)
+				return ret;
+			i2s->src_clk = clk_get_rate(i2s->i2s_clk);
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
 
 	mclk_div = csky_i2s_calc_mclk_div(i2s, rate, word_size);
 	if (mclk_div < 0)
@@ -397,6 +424,7 @@ static int csky_i2s_probe(struct platform_device *pdev)
 	struct csky_i2s *i2s;
 	struct resource *res;
 	struct snd_dmaengine_pcm_config *pcm_conf;
+	struct clk *tmp_clk;
 	int ret;
 
 	i2s = devm_kzalloc(&pdev->dev, sizeof(*i2s), GFP_KERNEL);
@@ -415,10 +443,67 @@ static int csky_i2s_probe(struct platform_device *pdev)
 		return i2s->irq;
 	}
 
+	if (of_property_read_u32(pdev->dev.of_node, "clock-frequency",
+				 &i2s->src_clk) < 0) {
+		/* get i2s clk */
+
+		i2s->i2s_clk = devm_clk_get(&pdev->dev, "audio");
+		if (IS_ERR(i2s->i2s_clk)) {
+			dev_err(&pdev->dev, "Failed to get clk 'audio'\n");
+			return PTR_ERR(i2s->i2s_clk);
+		}
+
+		ret = clk_prepare_enable(i2s->i2s_clk);
+		if (ret) {
+			dev_err(&pdev->dev, "Failed to enable clk 'audio'\n");
+			return ret;
+		}
+
+		i2s->src_clk = clk_get_rate(i2s->i2s_clk);
+
+		/* get i2s clk gate */
+
+		i2s->i2s_clk_gate = devm_clk_get(&pdev->dev, "gate");
+		if (IS_ERR(i2s->i2s_clk_gate)) {
+			dev_err(&pdev->dev, "Failed to get clk 'gate'\n");
+			ret = PTR_ERR(i2s->i2s_clk_gate);
+			goto err_clk;
+		}
+
+		ret = clk_prepare_enable(i2s->i2s_clk_gate);
+		if (ret) {
+			dev_err(&pdev->dev, "Failed to enable clk 'gate'\n");
+			goto err_clk;
+		}
+
+		/* get clk for 44.1k fs */
+		tmp_clk = csky_of_clk_get_by_phandle(pdev->dev.of_node,
+						     "clk-for-fs-44k", 0);
+		if (IS_ERR(tmp_clk)) {
+			dev_err(&pdev->dev,
+				"Failed to get clk 'clk-for-fs-44k'\n");
+			ret = PTR_ERR(tmp_clk);
+			goto err_clk;
+		}
+		i2s->clk_fs_44k = clk_get_rate(tmp_clk);
+		clk_put(tmp_clk);
+
+		/* get clk for 48k fs */
+		tmp_clk = csky_of_clk_get_by_phandle(pdev->dev.of_node,
+						     "clk-for-fs-48k", 0);
+		if (IS_ERR(tmp_clk)) {
+			dev_err(&pdev->dev,
+				"Failed to get clk 'clk-for-fs-48k'\n");
+			ret = PTR_ERR(tmp_clk);
+			goto err_clk;
+		}
+		i2s->clk_fs_48k = clk_get_rate(tmp_clk);
+		clk_put(tmp_clk);
+	}
+
 	i2s->dev = &pdev->dev;
 	i2s->playback_dma_data.addr = res->start + IIS_DR;
 	i2s->playback_dma_data.maxburst = 1;
-	i2s->src_clk = 147456000; /* 147.456MHZ */
 	i2s->audio_fmt = SND_SOC_DAIFMT_I2S;
 
 	ret = devm_snd_soc_register_component(&pdev->dev,
@@ -426,12 +511,15 @@ static int csky_i2s_probe(struct platform_device *pdev)
 					      &csky_i2s_dai, 1);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register DAI\n");
-		return ret;
+		goto err_clk;
 	}
 
 	pcm_conf = devm_kzalloc(&pdev->dev, sizeof(*pcm_conf), GFP_KERNEL);
-	if (!pcm_conf)
-		return -ENOMEM;
+	if (!pcm_conf) {
+		dev_err(&pdev->dev, "Failed to allocate memory for pcm_conf\n");
+		ret = -ENOMEM;
+		goto err_clk;
+	}
 
 	pcm_conf->prepare_slave_config =
 			csky_snd_dmaengine_pcm_prepare_slave_config;
@@ -440,15 +528,28 @@ static int csky_i2s_probe(struct platform_device *pdev)
 	ret = csky_snd_dmaengine_pcm_register(&pdev->dev, pcm_conf, 0);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register PCM\n");
-		return ret;
+		goto err_clk;
 	}
 
 	return 0;
+
+err_clk:
+	if (!IS_ERR(i2s->i2s_clk))
+		clk_disable_unprepare(i2s->i2s_clk);
+	if (!IS_ERR(i2s->i2s_clk_gate))
+		clk_disable_unprepare(i2s->i2s_clk_gate);
+
+	return ret;
 }
 
 static int csky_i2s_remove(struct platform_device *pdev)
 {
 	struct csky_i2s *i2s = dev_get_drvdata(&pdev->dev);
+
+	if (!IS_ERR(i2s->i2s_clk))
+		clk_disable_unprepare(i2s->i2s_clk);
+	if (!IS_ERR(i2s->i2s_clk_gate))
+		clk_disable_unprepare(i2s->i2s_clk_gate);
 
 	csky_snd_dmaengine_pcm_unregister(&pdev->dev);
 	return 0;

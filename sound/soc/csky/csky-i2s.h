@@ -168,6 +168,10 @@ struct csky_i2s {
 	void __iomem *regs;
 	int irq;
 	unsigned int src_clk;
+	struct clk *i2s_clk;
+	struct clk *i2s_clk_gate;
+	unsigned int clk_fs_44k; /* clock for 11.025k/22.05k/44.1k/88.2k fs */
+	unsigned int clk_fs_48k; /* clock for 8k/16k/32k/48k/96k fs */
 	unsigned int audio_fmt;
 	struct snd_dmaengine_dai_dma_data playback_dma_data;
 };
