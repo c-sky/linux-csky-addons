@@ -591,4 +591,3 @@ EXPORT_SYMBOL_GPL(csky_snd_dmaengine_pcm_unregister);
 MODULE_DESCRIPTION("C-SKY SoCs I2S PCM Driver");
 MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
 MODULE_LICENSE("GPL v2");
-

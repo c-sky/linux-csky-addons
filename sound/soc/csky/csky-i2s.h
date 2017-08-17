@@ -191,4 +191,3 @@ extern int csky_snd_dmaengine_pcm_prepare_slave_config(
 		struct dma_slave_config *slave_config);
 
 #endif /* __CSKY_I2S_H__ */
-

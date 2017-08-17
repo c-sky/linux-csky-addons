@@ -97,4 +97,3 @@ module_platform_driver(dummy_codec_codec_driver);
 MODULE_DESCRIPTION("C-SKY SoCs Dummy Audio Codec Driver");
 MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
 MODULE_LICENSE("GPL v2");
-

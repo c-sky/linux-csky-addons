@@ -28,7 +28,6 @@
 #include <sound/soc.h>
 #include <sound/soc-dai.h>
 #include "csky-i2s.h"
-#include "../../../drivers/clk/csky/clk.h"
 
 static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 				  unsigned int rate,
@@ -477,8 +476,7 @@ static int csky_i2s_probe(struct platform_device *pdev)
 		}
 
 		/* get clk for 44.1k fs */
-		tmp_clk = csky_of_clk_get_by_phandle(pdev->dev.of_node,
-						     "clk-for-fs-44k", 0);
+		tmp_clk = devm_clk_get(&pdev->dev, "clk-for-fs-44k");
 		if (IS_ERR(tmp_clk)) {
 			dev_err(&pdev->dev,
 				"Failed to get clk 'clk-for-fs-44k'\n");
@@ -486,11 +484,9 @@ static int csky_i2s_probe(struct platform_device *pdev)
 			goto err_clk;
 		}
 		i2s->clk_fs_44k = clk_get_rate(tmp_clk);
-		clk_put(tmp_clk);
 
 		/* get clk for 48k fs */
-		tmp_clk = csky_of_clk_get_by_phandle(pdev->dev.of_node,
-						     "clk-for-fs-48k", 0);
+		tmp_clk = devm_clk_get(&pdev->dev, "clk-for-fs-48k");
 		if (IS_ERR(tmp_clk)) {
 			dev_err(&pdev->dev,
 				"Failed to get clk 'clk-for-fs-48k'\n");
@@ -498,7 +494,6 @@ static int csky_i2s_probe(struct platform_device *pdev)
 			goto err_clk;
 		}
 		i2s->clk_fs_48k = clk_get_rate(tmp_clk);
-		clk_put(tmp_clk);
 	}
 
 	i2s->dev = &pdev->dev;
@@ -574,4 +569,3 @@ module_platform_driver(csky_i2s_driver);
 MODULE_DESCRIPTION("C-SKY SoCs I2S Controller Driver");
 MODULE_AUTHOR("Lei Ling <lei_ling@c-sky.com>");
 MODULE_LICENSE("GPL v2");
-
