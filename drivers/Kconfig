@@ -8,5 +8,6 @@ source "addons/drivers/mailbox/Kconfig"
 source "addons/drivers/crypto/Kconfig"
 source "addons/drivers/watchdog/Kconfig"
 source "addons/drivers/clk/csky/Kconfig"
+source "addons/drivers/pwm/Kconfig"
 endmenu
 

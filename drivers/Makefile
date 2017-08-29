@@ -9,3 +9,4 @@ obj-y	+= mailbox/
 obj-y	+= crypto/
 obj-y	+= watchdog/
 obj-y	+= clk/csky/
+obj-y	+= pwm/

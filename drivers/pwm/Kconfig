@@ -1,0 +1,13 @@
+#
+# C-SKY Pin control drivers
+#
+
+menu "PWM"
+
+config PWM_CSKY
+	bool "C-SKY PWM DRIVER"
+	depends on OF
+	select PWM
+	select BACKLIGHT_PWM
+endmenu
+
