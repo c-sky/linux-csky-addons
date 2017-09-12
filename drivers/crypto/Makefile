@@ -15,3 +15,7 @@ endif
 ifeq ($(CONFIG_CSKY_CRYPTO_RSA), y)
 csky-cipher-objs += csky_rsa.o
 endif
+
+ifeq ($(CONFIG_CSKY_CRYPTO_SHA), y)
+csky-cipher-objs += csky_sha.o
+endif

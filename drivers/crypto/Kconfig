@@ -22,4 +22,7 @@ config CSKY_CRYPTO_CRC
 config CSKY_CRYPTO_RSA
     bool "Support RSA Engine Driver"
 
+config CSKY_CRYPTO_SHA
+    bool "Support SHA Engine Driver"
+
 endif # CRYPTO_DEV_CSKY
