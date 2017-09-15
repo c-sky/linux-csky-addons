@@ -93,8 +93,8 @@
 #define IISCNF_OUT_AUDFMT_LEFT_J	(2 << 0)
 #define OUT_AUDFMT_MASK			0x3
 #define OUT_AUDFMT_SHIFT		0
-#define IISCNF_OUT_WS_POLARITY_NORMAL	(0 << 2)
-#define IISCNF_OUT_WS_POLARITY_INVERTED	(1 << 2)
+#define IISCNF_OUT_WS_POLARITY_NORMAL	(1 << 2)
+#define IISCNF_OUT_WS_POLARITY_INVERTED	(0 << 2)
 #define OUT_WS_POLARITY_MASK		0x1
 #define OUT_WS_POLARITY_SHIFT		2
 #define IISCNF_OUT_SAMPLE_SOURCE_VOICE	(1 << 3)
@@ -174,6 +174,21 @@ struct csky_i2s {
 	unsigned int clk_fs_48k; /* clock for 8k/16k/32k/48k/96k fs */
 	unsigned int audio_fmt;
 	struct snd_dmaengine_dai_dma_data playback_dma_data;
+
+	unsigned int fifo_depth; /* in words */
+	unsigned int intr_tx_threshold;
+	unsigned int intr_rx_threshold;
+	unsigned int dma_tx_threshold;
+	unsigned int dma_rx_threshold;
+
+	/* data related to PIO transfers (TX) */
+	bool use_pio;
+	struct snd_pcm_substream __rcu *tx_substream;
+	unsigned int (*tx_fn)(struct csky_i2s *dev,
+			      struct snd_pcm_runtime *runtime,
+			      unsigned int tx_ptr,
+			      bool *period_elapsed);
+	unsigned int tx_ptr;
 };
 
 #define csky_i2s_readl(i2s, offset) \
@@ -189,5 +204,8 @@ extern int csky_snd_dmaengine_pcm_prepare_slave_config(
 		struct snd_pcm_substream *substream,
 		struct snd_pcm_hw_params *params,
 		struct dma_slave_config *slave_config);
+
+extern int csky_pcm_pio_register(struct platform_device *pdev);
+extern void csky_pcm_pio_push_tx(struct csky_i2s *i2s);
 
 #endif /* __CSKY_I2S_H__ */
