@@ -318,6 +318,13 @@ static int dmaengine_pcm_open(struct snd_pcm_substream *substream)
 	if (ret)
 		return ret;
 
+	snd_pcm_hw_constraint_pow2(substream->runtime, 0,
+				   SNDRV_PCM_HW_PARAM_BUFFER_BYTES);
+	snd_pcm_hw_constraint_pow2(substream->runtime, 0,
+				   SNDRV_PCM_HW_PARAM_PERIOD_BYTES);
+	snd_pcm_hw_constraint_integer(substream->runtime,
+				      SNDRV_PCM_HW_PARAM_PERIODS);
+
 	return snd_dmaengine_pcm_open(substream, chan);
 }
 
@@ -408,7 +415,7 @@ static int dmaengine_pcm_new(struct snd_soc_pcm_runtime *rtd)
 		}
 
 		ret = snd_pcm_lib_preallocate_pages(substream,
-				SNDRV_DMA_TYPE_DEV_IRAM,
+				SNDRV_DMA_TYPE_DEV,
 				dmaengine_dma_dev(pcm, substream),
 				prealloc_buffer_size,
 				max_buffer_size);

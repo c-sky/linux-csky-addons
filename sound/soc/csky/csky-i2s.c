@@ -29,6 +29,18 @@
 #include <sound/soc-dai.h>
 #include "csky-i2s.h"
 
+#define BUFFER_BYTES_MAX	(256 * 1024)
+#define PERIOD_BYTES_MIN	32
+#define PERIOD_BYTES_MAX	4096
+#define PERIODS_MIN		4
+#define PERIODS_MAX		(BUFFER_BYTES_MAX / PERIOD_BYTES_MIN)
+
+#define DEFAULT_FIFO_DEPTH		32 /* in words */
+#define DEFAULT_INTR_TX_THRESHOLD	16
+#define DEFAULT_INTR_RX_THRESHOLD	16
+#define DEFAULT_DMA_TX_THRESHOLD	16
+#define DEFAULT_DMA_RX_THRESHOLD	16
+
 static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 				  unsigned int rate,
 				  unsigned int word_size)
@@ -271,11 +283,18 @@ static int csky_i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 
 static void csky_i2s_start_playback(struct csky_i2s *i2s)
 {
+	if (i2s->use_pio)
+		csky_i2s_writel(i2s, IIS_IMR, IIS_FIFOINT_TX_FIFO_EMPTY);
+	else
+		csky_i2s_writel(i2s, IIS_DMACR, DMACR_EN_TX_DMA);
+
 	csky_i2s_writel(i2s, IIS_AUDIOEN, AUDIOEN_IIS_EN);
 }
 
 static void csky_i2s_stop_playback(struct csky_i2s *i2s)
 {
+	csky_i2s_writel(i2s, IIS_IMR, 0); /* disable fifo interrupts */
+	csky_i2s_writel(i2s, IIS_DMACR, 0); /* disable tx dma */
 	csky_i2s_writel(i2s, IIS_AUDIOEN, 0);
 }
 
@@ -350,8 +369,14 @@ static void csky_i2s_init(struct csky_i2s *i2s)
 
 	csky_i2s_writel(i2s, IIS_IMR, 0); /* disable FIFO intr */
 
-	csky_i2s_writel(i2s, IIS_DMARDLR, 0xf); /* DMA Receive Data Level */
-	csky_i2s_writel(i2s, IIS_DMATDLR, 0xf); /* DMA Transmit Data Level */
+	csky_i2s_writel(i2s, IIS_RXFTLR, i2s->intr_rx_threshold);
+	if (i2s->use_pio)
+		csky_i2s_writel(i2s, IIS_TXFTLR, i2s->intr_tx_threshold);
+	else
+		csky_i2s_writel(i2s, IIS_TXFTLR, 0);
+
+	csky_i2s_writel(i2s, IIS_DMARDLR, i2s->dma_rx_threshold);
+	csky_i2s_writel(i2s, IIS_DMATDLR, i2s->dma_tx_threshold);
 
 	csky_i2s_writel(i2s, IIS_MIMR, 0x0); /* disable Mode intr */
 
@@ -364,8 +389,6 @@ static void csky_i2s_init(struct csky_i2s *i2s)
 			IISCNF_OUT_AUDFMT_I2S |
 			IISCNF_OUT_WS_POLARITY_NORMAL |
 			IISCNF_OUT_MASTER); /* master, i2s mode */
-	csky_i2s_writel(i2s, IIS_DMACR,
-			DMACR_EN_TX_DMA); /* enable tx dma */
 	return;
 }
 
@@ -411,12 +434,31 @@ static const struct snd_pcm_hardware csky_pcm_dma_hardware = {
 			| SNDRV_PCM_INFO_PAUSE),
 	.channels_min		= 1,
 	.channels_max		= 2,
-	.buffer_bytes_max	= 64 * 4096,
-	.period_bytes_min	= 4096,
-	.period_bytes_max	= 4096,
-	.periods_min		= 1,
-	.periods_max		= 64,
+	.buffer_bytes_max	= BUFFER_BYTES_MAX,
+	.period_bytes_min	= PERIOD_BYTES_MIN,
+	.period_bytes_max	= PERIOD_BYTES_MAX,
+	.periods_min		= PERIODS_MIN,
+	.periods_max		= PERIODS_MAX,
 };
+
+static irqreturn_t csky_i2s_irq_handler(int irq, void *dev_id)
+{
+	struct csky_i2s *i2s = dev_id;
+	u32 val;
+
+	val = csky_i2s_readl(i2s, IIS_ISR);
+	/* clear interrupts */
+	csky_i2s_writel(i2s, IIS_FICR, val);
+
+	if (val & IIS_FIFOINT_TX_FIFO_EMPTY) {
+		if (i2s->use_pio) {
+			csky_pcm_pio_push_tx(i2s);
+			csky_i2s_writel(i2s, IIS_FICR, val);
+		}
+	}
+
+	return IRQ_HANDLED;
+}
 
 static int csky_i2s_probe(struct platform_device *pdev)
 {
@@ -440,6 +482,13 @@ static int csky_i2s_probe(struct platform_device *pdev)
 	if (i2s->irq < 0) {
 		dev_err(&pdev->dev, "Failed to retrieve irq number\n");
 		return i2s->irq;
+	}
+
+	ret = devm_request_irq(&pdev->dev, i2s->irq,
+			       csky_i2s_irq_handler, 0, pdev->name, i2s);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to request irq\n");
+		return ret;
 	}
 
 	if (of_property_read_u32(pdev->dev.of_node, "clock-frequency",
@@ -496,9 +545,35 @@ static int csky_i2s_probe(struct platform_device *pdev)
 		i2s->clk_fs_48k = clk_get_rate(tmp_clk);
 	}
 
+	if (of_property_read_bool(pdev->dev.of_node, "use-pio")) {
+		dev_info(&pdev->dev, "use pio\n");
+		i2s->use_pio = true;
+	} else {
+		dev_info(&pdev->dev, "use dma\n");
+		i2s->use_pio = false;
+	}
+
+	if (of_property_read_u32(pdev->dev.of_node, "fifo-depth",
+				 &i2s->fifo_depth) < 0)
+		i2s->fifo_depth = DEFAULT_FIFO_DEPTH;
+	if (of_property_read_u32(pdev->dev.of_node, "intr-tx-threshold",
+				 &i2s->intr_tx_threshold) < 0)
+		i2s->intr_tx_threshold = DEFAULT_INTR_TX_THRESHOLD;
+	if (of_property_read_u32(pdev->dev.of_node, "intr-rx-threshold",
+				 &i2s->intr_rx_threshold) < 0)
+		i2s->intr_rx_threshold = DEFAULT_INTR_RX_THRESHOLD;
+	if (of_property_read_u32(pdev->dev.of_node, "dma-tx-threshold",
+				 &i2s->dma_tx_threshold) < 0)
+		i2s->dma_tx_threshold = DEFAULT_DMA_TX_THRESHOLD;
+	if (of_property_read_u32(pdev->dev.of_node, "dma-rx-threshold",
+				 &i2s->dma_rx_threshold) < 0)
+		i2s->dma_rx_threshold = DEFAULT_DMA_RX_THRESHOLD;
+
+	i2s->playback_dma_data.maxburst =
+			i2s->fifo_depth - i2s->dma_tx_threshold;
+
 	i2s->dev = &pdev->dev;
 	i2s->playback_dma_data.addr = res->start + IIS_DR;
-	i2s->playback_dma_data.maxburst = 1;
 	i2s->audio_fmt = SND_SOC_DAIFMT_I2S;
 
 	ret = devm_snd_soc_register_component(&pdev->dev,
@@ -516,14 +591,24 @@ static int csky_i2s_probe(struct platform_device *pdev)
 		goto err_clk;
 	}
 
-	pcm_conf->prepare_slave_config =
-			csky_snd_dmaengine_pcm_prepare_slave_config;
-	pcm_conf->pcm_hardware = &csky_pcm_dma_hardware;
-	pcm_conf->prealloc_buffer_size = 64 * 1024;
-	ret = csky_snd_dmaengine_pcm_register(&pdev->dev, pcm_conf, 0);
-	if (ret) {
-		dev_err(&pdev->dev, "Failed to register PCM\n");
-		goto err_clk;
+	if (i2s->use_pio) {
+		ret = csky_pcm_pio_register(pdev);
+		if (ret) {
+			dev_err(&pdev->dev,
+				"Could not register PIO PCM: %d\n", ret);
+			goto err_clk;
+		}
+	} else {
+		pcm_conf->prepare_slave_config =
+				csky_snd_dmaengine_pcm_prepare_slave_config;
+		pcm_conf->pcm_hardware = &csky_pcm_dma_hardware;
+		pcm_conf->prealloc_buffer_size = BUFFER_BYTES_MAX;
+
+		ret = csky_snd_dmaengine_pcm_register(&pdev->dev, pcm_conf, 0);
+		if (ret) {
+			dev_err(&pdev->dev, "Failed to register PCM\n");
+			goto err_clk;
+		}
 	}
 
 	return 0;
