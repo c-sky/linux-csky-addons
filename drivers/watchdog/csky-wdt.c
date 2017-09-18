@@ -34,23 +34,19 @@ static int csky_wdt_calc_period(struct csky_wdt_priv *priv)
 	struct watchdog_device *wdd;
 
 	wdd = &priv->wdd;
-	priv->wdt_cnts = wdd->timeout * priv->wdt_freq;
 	counters = priv->wdt_cnts >> 16;
 
 	/* transfer counters to period */
 	for (i = 0; i < 16; ++i) {
-		counters = counters >> 1;
 		if (counters < 2) {
-			period = i + 1;
+			period = i;
 			break;
 		}
+		counters = counters >> 1;
 	}
 
 	/* max period is 15 and the period round up */
-	if (period < 15)
-		priv->wdt_period = period + 1;
-	else
-		priv->wdt_period = period;
+	priv->wdt_period = period;
 
 	return 0;
 }
@@ -139,6 +135,11 @@ static int csky_wdt_settimeout(struct watchdog_device *wdd, unsigned int to)
 	struct csky_wdt_priv *priv = watchdog_get_drvdata(wdd);
 
 	wdd->timeout = to;
+	priv->wdt_cnts = wdd->timeout * priv->wdt_freq;
+	if (priv->wdt_cnts > WDT_MAX_COUNTS) {
+		dev_err(priv->dev, "timeout %d too big\n", wdd->timeout);
+		return -EINVAL;
+	}
 	csky_wdt_updatetimeout(priv);
 	csky_wdt_feed(wdd);
 

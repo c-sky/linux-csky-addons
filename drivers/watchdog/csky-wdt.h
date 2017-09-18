@@ -21,6 +21,8 @@
 #define WDTCNF_CR_DIS		(~ WDTCNF_CR_EN)
 #define WDTCNF_CR_RMOD_RST	(~ WDTCNF_CR_RMOD_INT)
 
+#define WDT_MAX_COUNTS		BIT(31)
+
 
 struct csky_wdt_priv {
 	struct device		*dev;
