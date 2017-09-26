@@ -29,9 +29,9 @@
 #include <sound/soc-dai.h>
 #include "csky-i2s.h"
 
-#define BUFFER_BYTES_MAX	(256 * 1024)
+#define BUFFER_BYTES_MAX	(512 * 1024)
 #define PERIOD_BYTES_MIN	32
-#define PERIOD_BYTES_MAX	4096
+#define PERIOD_BYTES_MAX	(8 * 1024)
 #define PERIODS_MIN		4
 #define PERIODS_MAX		(BUFFER_BYTES_MAX / PERIOD_BYTES_MIN)
 
@@ -545,12 +545,12 @@ static int csky_i2s_probe(struct platform_device *pdev)
 		i2s->clk_fs_48k = clk_get_rate(tmp_clk);
 	}
 
-	if (of_property_read_bool(pdev->dev.of_node, "use-pio")) {
-		dev_info(&pdev->dev, "use pio\n");
-		i2s->use_pio = true;
-	} else {
+	if (of_find_property(pdev->dev.of_node, "dmas", NULL)) {
 		dev_info(&pdev->dev, "use dma\n");
 		i2s->use_pio = false;
+	} else {
+		dev_info(&pdev->dev, "use pio\n");
+		i2s->use_pio = true;
 	}
 
 	if (of_property_read_u32(pdev->dev.of_node, "fifo-depth",
