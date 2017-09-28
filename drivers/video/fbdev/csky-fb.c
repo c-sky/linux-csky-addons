@@ -15,6 +15,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
@@ -149,16 +150,10 @@ static void csky_fb_lcd_reset(struct csky_fb_info *info)
 	return;
 }
 
-static int csky_fb_init_registers(struct fb_info *fbinfo)
+static int csky_fb_set_timing(struct fb_info *fbinfo)
 {
 	struct csky_fb_info *info = fbinfo->par;
-	u32 videosize;
 
-	u32 control = info->pixel_fmt |
-		      CSKY_LCDCON_OUT_24BIT |
-		      CSKY_LCDCON_WML_8WORD |
-		      CSKY_LCDCON_VBL_16CYCLES |
-		      CSKY_LCDCON_PAS_TFT;
 	u32 timing0 = (((info->vm.hback_porch - 1) & 0xff) << 24) |
 		      (((info->vm.hfront_porch - 1) & 0xff) << 16) |
 		      (((info->vm.hsync_len - 1) & 0x3f) << 10) |
@@ -179,9 +174,25 @@ static int csky_fb_init_registers(struct fb_info *fbinfo)
 		timing2 |= CSKY_LCDTIM2_CLKS_EXT;
 	timing2 |= info->pcd & 0xff;
 
+	if (info->vm.hactive > 1024)
+		timing2 |= CSKY_LCDTIM2_PPL_MSB;
+	if (info->vm.vactive > 1024)
+		timing2 |= CSKY_LCDTIM2_LPP_MSB;
+
 	writel(timing0, info->iobase + CSKY_LCD_TIMING0);
 	writel(timing1, info->iobase + CSKY_LCD_TIMING1);
 	writel(timing2, info->iobase + CSKY_LCD_TIMING2);
+
+	return 0;
+}
+
+static int csky_fb_init_registers(struct fb_info *fbinfo)
+{
+	struct csky_fb_info *info = fbinfo->par;
+	u32 videosize;
+	u32 control;
+
+	csky_fb_set_timing(fbinfo);
 
 	/* disable all the lcdc interrupts */
 	writel(0x0, info->iobase + CSKY_LCD_INT_MASK);
@@ -196,6 +207,11 @@ static int csky_fb_init_registers(struct fb_info *fbinfo)
 	writel(info->pbase_yuv.u, info->iobase + CSKY_LCD_PBASE_U);
 	writel(info->pbase_yuv.v, info->iobase + CSKY_LCD_PBASE_V);
 
+	control = info->pixel_fmt |
+		      CSKY_LCDCON_OUT_24BIT |
+		      CSKY_LCDCON_WML_8WORD |
+		      CSKY_LCDCON_VBL_16CYCLES |
+		      CSKY_LCDCON_PAS_TFT;
 	/* enable lcdc */
 	control |= CSKY_LCDCON_LEN;
 	writel(control, info->iobase + CSKY_LCD_CONTROL);
@@ -304,6 +320,32 @@ static int csky_fb_pan_display(struct fb_var_screeninfo *var,
 	return 0;
 }
 
+static int csky_fb_set_out_mode(struct fb_info *fbinfo,
+				enum csky_fb_out_mode mode)
+{
+	int ret;
+	struct videomode vm;
+	struct csky_fb_info *info = fbinfo->par;
+	struct device *dev = info->dev;
+	u32 hclk_freq = info->hclk_freq;
+	struct device_node *screen_node;
+
+	screen_node = of_parse_phandle(dev->of_node, "screen-timings", 0);
+	ret = of_get_videomode(screen_node, &vm, mode);
+	if (ret) {
+		dev_err(dev, "Failed to get videomode from DT\n");
+		return ret;
+	}
+	if (memcmp(&info->vm, &vm, sizeof(vm))) {
+		memcpy(&info->vm, &vm, sizeof(vm));
+		info->pcd = hclk_freq / (vm.pixelclock * 2) - 1;
+		csky_fb_check_var(&fbinfo->var, fbinfo);
+		csky_fb_set_timing(fbinfo);
+	}
+
+	return 0;
+}
+
 static int csky_fb_ioctl(struct fb_info *fbinfo,
 			 unsigned int cmd,
 			 unsigned long arg)
@@ -358,6 +400,18 @@ static int csky_fb_ioctl(struct fb_info *fbinfo,
 			csky_fb_set_lcd_pbase(info, &base);
 			break;
 		}
+	case CSKY_FBIO_SET_OUT_MODE:
+		{
+			enum csky_fb_out_mode mode;
+
+			if (copy_from_user(&mode, argp, sizeof(mode))) {
+				ret = -EFAULT;
+				break;
+			}
+
+			csky_fb_set_out_mode(fbinfo, mode);
+			break;
+		}
 	default:
 		ret = -ENOIOCTLCMD;
 	}
@@ -381,17 +435,20 @@ static struct fb_ops csky_fb_ops = {
 static int csky_fb_map_video_memory(struct fb_info *fbinfo)
 {
 	struct csky_fb_info *info = fbinfo->par;
-	dma_addr_t map_dma;
-	unsigned map_size = PAGE_ALIGN(fbinfo->fix.smem_len);
+	phys_addr_t map_phys;
+	/* apply for max size. 1080p single buffer */
+	unsigned map_size = PAGE_ALIGN(CSKY_FB_1080P_SIZE *
+				       (fbinfo->var.bits_per_pixel / 8));
 
-	fbinfo->screen_base = dma_alloc_coherent(info->dev, map_size,
-						 &map_dma, GFP_KERNEL);
+	fbinfo->screen_base = kmalloc(map_size, GFP_KERNEL);
+
 	if (fbinfo->screen_base == NULL) {
 		return -ENOMEM;
 	}
 
+	map_phys = virt_to_phys(fbinfo->screen_base);
 	memset(fbinfo->screen_base, 0, map_size);
-	fbinfo->fix.smem_start = map_dma;
+	fbinfo->fix.smem_start = map_phys;
 	fbinfo->fix.smem_len = map_size;
 
 	info->pbase_yuv.y = fbinfo->fix.smem_start;
@@ -402,12 +459,8 @@ static int csky_fb_map_video_memory(struct fb_info *fbinfo)
 
 static inline void csky_fb_unmap_video_memory(struct fb_info *fbinfo)
 {
-	struct csky_fb_info *info = fbinfo->par;
+	kfree(fbinfo->screen_base);
 
-	dma_free_coherent(info->dev,
-			  PAGE_ALIGN(fbinfo->fix.smem_len),
-			  fbinfo->screen_base,
-			  fbinfo->fix.smem_start);
 	return;
 }
 
@@ -440,8 +493,8 @@ static int csky_fb_probe(struct platform_device *pdev)
 	void __iomem *iobase;
 	struct reset_control *rst;
 	u32 bits_per_pixel;
+	u32 hclk_freq;
 	u32 pixel_clk_src; /* pixel clock source */
-	u32 pcd; /* pixel clock divider. f=HCLK/2(pcd+1) */
 	u32 hsync_pulse_pol; /* HSYNC pulse polarity */
 	u32 vsync_pulse_pol; /* VSYNC pulse polarity */
 	u32 pixel_clock_pol; /* pixel clock polarity */
@@ -449,6 +502,8 @@ static int csky_fb_probe(struct platform_device *pdev)
 	struct videomode vm;
 	struct fb_info *fbinfo;
 	struct csky_fb_info *info;
+	struct clk *hclk;
+	struct device_node *screen_node;
 	int ret;
 
 	/* get resources */
@@ -468,6 +523,18 @@ static int csky_fb_probe(struct platform_device *pdev)
 		return PTR_ERR(rst);
 	}
 
+	hclk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(hclk)) {
+		dev_err(&pdev->dev, "Failed to get hclk");
+		return PTR_ERR(hclk);
+	}
+
+	hclk_freq = clk_get_rate(hclk);
+	if (!hclk_freq) {
+		dev_err(&pdev->dev, "Failed, hclk is 0!\n");
+		return -EINVAL;
+	}
+
 	ret = of_property_read_u32(dev->of_node, "bits-per-pixel",
 				   &bits_per_pixel);
 	if (ret < 0) {
@@ -480,12 +547,6 @@ static int csky_fb_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		dev_err(&pdev->dev,
 			"Failed to get property pixel-clock-source\n");
-		return ret;
-	}
-
-	ret = of_property_read_u32(dev->of_node, "pcd", &pcd);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Failed to get property pcd\n");
 		return ret;
 	}
 
@@ -510,7 +571,8 @@ static int csky_fb_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = of_get_videomode(dev->of_node, &vm, OF_USE_NATIVE_MODE);
+	screen_node = of_parse_phandle(dev->of_node, "screen-timings", 0);
+	ret = of_get_videomode(screen_node, &vm, OF_USE_NATIVE_MODE);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to get videomode from DT\n");
 		return ret;
@@ -532,12 +594,18 @@ static int csky_fb_probe(struct platform_device *pdev)
 	info->irq = irq;
 	memcpy(&info->vm, &vm, sizeof(vm));
 	info->pixel_clk_src = pixel_clk_src;
-	info->pcd = pcd;
+	info->hclk_freq = hclk_freq;
 	info->hsync_pulse_pol = hsync_pulse_pol;
 	info->vsync_pulse_pol = vsync_pulse_pol;
 	info->pixel_clock_pol = pixel_clock_pol;
 	init_waitqueue_head(&info->vsync_info.wait);
 	info->pixel_fmt = CSKY_LCDCON_DFS_RGB;
+
+	if (hclk_freq % (vm.pixelclock * 2) != 0) {
+		dev_err(&pdev->dev, "Failed to calculate the value of pcd\n");
+		return -EINVAL;
+	}
+	info->pcd = hclk_freq / (vm.pixelclock * 2) - 1;
 
 	strcpy(fbinfo->fix.id, DRIVER_NAME);
 	fbinfo->fix.smem_len = vm.hactive * vm.vactive *
@@ -579,7 +647,7 @@ static int csky_fb_probe(struct platform_device *pdev)
 
 	csky_fb_check_var(&fbinfo->var, fbinfo);
 
-	/* csky_fb_init_registers(fbinfo); */
+	csky_fb_init_registers(fbinfo);
 
 	ret = register_framebuffer(fbinfo);
 	if (ret < 0) {

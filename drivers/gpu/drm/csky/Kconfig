@@ -1,0 +1,11 @@
+#
+# C-SKY DRM  driver configuration
+#
+
+config CSKY_HDMI
+	bool "C-SKY HDMI Driver"
+	depends on OF
+	select HDMI
+	help
+	  This enables the HDMI driver for C-SKY.
+

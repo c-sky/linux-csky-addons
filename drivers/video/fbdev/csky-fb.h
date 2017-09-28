@@ -48,6 +48,7 @@
 #define CSKY_LCD_PALETTE_BASE	0x800
 
 #define CSKY_LCD_PALETTE_ENTRIES_NUM	256
+#define CSKY_FB_1080P_SIZE		(1920 * 1080)
 
 /* bits definition */
 
@@ -114,6 +115,9 @@
 /* OEP, Output Enable polarity */
 #define CSKY_LCDTIM2_OEP_ACT_LOW	(1 << 12)
 
+#define CSKY_LCDTIM2_PPL_MSB		(1 << 24)
+#define CSKY_LCDTIM2_LPP_MSB		(1 << 25)
+
 /*
  * LCD_INT_STAT register
  */
@@ -148,12 +152,19 @@ struct csky_fb_vsync {
 					enum csky_fb_pixel_format)
 #define CSKY_FBIO_SET_PBASE_YUV	_IOW('F', CSKY_FBIO_BASE+2, \
 					struct csky_fb_lcd_pbase_yuv)
+#define CSKY_FBIO_SET_OUT_MODE	_IOW('F', CSKY_FBIO_BASE+3, \
+					enum csky_fb_out_mode)
 
 enum csky_fb_pixel_format {
 	CSKY_FB_PIXEL_FMT_RGB = CSKY_LCDCON_DFS_RGB,
 	CSKY_FB_PIXEL_FMT_YUV444 = CSKY_LCDCON_DFS_YUV444,
 	CSKY_FB_PIXEL_FMT_YUV422 = CSKY_LCDCON_DFS_YUV422,
 	CSKY_FB_PIXEL_FMT_YUV420 = CSKY_LCDCON_DFS_YUV420,
+};
+
+enum csky_fb_out_mode {
+	CSKY_FB_OUT_LCD_MODE = 0,
+	CSKY_FB_OUT_HDMI_MODE,
 };
 
 struct csky_fb_lcd_pbase_yuv {
@@ -171,6 +182,7 @@ struct csky_fb_info {
 	struct clk *clk;
 	struct videomode vm;
 	u32 pixel_clk_src;	/* pixel clock source */
+	u32 hclk_freq;		/* hclk frequence */
 	u32 pcd;		/* pixel clock divider. f=HCLK/2(pcd+1) */
 	u32 hsync_pulse_pol;	/* HSYNC pulse polarity */
 	u32 vsync_pulse_pol;	/* VSYNC pulse polarity */
