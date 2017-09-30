@@ -545,23 +545,25 @@ static int csky_timing_data_init(struct csky_hdmi *hdmi)
 	int ret;
 	int vid;
 	struct device *dev = hdmi->dev;
-	struct device_node *screen_node;
 	struct videomode vm;
+	struct of_phandle_args args;
 
-	screen_node = of_parse_phandle(dev->of_node, "screen-timings", 0);
-	ret = of_get_videomode(screen_node, &vm, HDMI_TIMING_INDEX);
-	if (ret)
+	ret = of_parse_phandle_with_args(dev->of_node, "screen-timings",
+				   "#screen-timings-cells", 0, &args);
+	if (ret) {
+		dev_err(dev, "Failed to get timing from DT\n");
+		return ret;
+	}
+	ret = of_get_videomode(args.np, &vm, args.args[0]);
+	if (ret) {
 		dev_err(dev, "Failed to get videomode from DT\n");
-	else
-		memcpy(&hdmi->vm, &vm, sizeof(vm));
+		return ret;
+	}
 
-	ret = of_property_read_u32(dev->of_node, "vid-code", &vid);
-	if (ret < 0)
-		dev_err(dev, "Failed to get property vid-code\n");
-	else
-		hdmi->hdmi_data.vid = vid;
+	memcpy(&hdmi->vm, &vm, sizeof(vm));
+	hdmi->hdmi_data.vid = args.args[1];
 
-	return 0;
+	return ret;
 }
 
 /* to config init format, hope the data comes from fb */
@@ -582,13 +584,19 @@ static int csky_hdmi_data_init(struct csky_hdmi *hdmi)
 
 static int csky_hdmi_init(struct csky_hdmi *hdmi)
 {
+	int ret;
+
 	csky_hdmi_data_init(hdmi);
-	csky_timing_data_init(hdmi);
+	ret = csky_timing_data_init(hdmi);
+	if (ret) {
+		dev_err(hdmi->dev, "Failed to get timing data\n");
+		return ret;
+	}
 	csky_hdmi_modeb_reset(hdmi);
 	INIT_WORK(&hdmi->edid_work, csky_hdmi_main_work);
 	hdmi->edid_workq= create_singlethread_workqueue("hdmi-csky");
 
-	return 0;
+	return ret;
 }
 
 static irqreturn_t csky_hdmi_work_irq(int irq, void *dev_id)
@@ -627,7 +635,9 @@ static int csky_hdmi_probe(struct platform_device *pdev)
 		return hdmi->irq;
 
 	dev_set_drvdata(dev, hdmi);
-	csky_hdmi_init(hdmi);
+	ret = csky_hdmi_init(hdmi);
+	if (ret)
+		return ERR_PTR(ret);
 
 	ret = devm_request_threaded_irq(dev, hdmi->irq, csky_hdmi_irq,
 					csky_hdmi_work_irq,

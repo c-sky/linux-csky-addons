@@ -329,7 +329,6 @@
 #define PHY_DATA_SIZE		10
 #define HB0_TO_PB27_SIZE	31
 #define HDMI_INFO_FRAME_SIZE	0x11
-#define HDMI_TIMING_INDEX	1
 
 /* Video setting constants */
 #define VID_01_640X480P		1
