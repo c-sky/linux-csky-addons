@@ -16,6 +16,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/reboot.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -96,20 +97,17 @@ static int csky_wdt_enable(struct watchdog_device *wdd)
 	return 0;
 }
 
-static int csky_wdt_restart(struct watchdog_device *wdd,
-			    unsigned long action, void *data)
+static int csky_sys_restart(struct notifier_block *this,
+			    unsigned long mode, void *cmd)
 {
-	u32 dly;
-	unsigned long counters;
-	struct csky_wdt_priv *priv = watchdog_get_drvdata(wdd);
+	struct csky_wdt_priv *priv = container_of(this, struct csky_wdt_priv,
+						  restart_handler);
 
-	/* set the shortest time to restart system */
 	iowrite32(0x0, priv->iobase + WDT_TORR);
+	iowrite32(WDTCNF_CR_EN |
+		  ioread32(priv->iobase + WDT_CR),
+		  priv->iobase + WDT_CR);
 	iowrite32(WDTCNF_CCR_EN, priv->iobase + WDT_CRR);
-	/* delay the left time of reset */
-	counters = ioread32(priv->iobase + WDT_CCVR);
-	dly = (counters / priv->wdt_freq + 1) * 100;
-	mdelay(dly);
 
 	return 0;
 }
@@ -174,7 +172,7 @@ static struct watchdog_ops csky_wdt_ops = {
 	.get_timeleft	= csky_wdt_gettimeleft,
 	.ping		= csky_wdt_feed,
 	.set_timeout	= csky_wdt_settimeout,
-	.restart	= csky_wdt_restart,
+	.restart	= NULL,
 };
 
 static int csky_wdt_probe(struct platform_device *pdev)
@@ -236,6 +234,9 @@ static int csky_wdt_probe(struct platform_device *pdev)
 		return ret;
 
 	platform_set_drvdata(pdev, priv);
+	priv->restart_handler.notifier_call = csky_sys_restart;
+	priv->restart_handler.priority = 128;
+	register_restart_handler(&priv->restart_handler);
 
 	return 0;
 }
@@ -245,7 +246,7 @@ static int csky_wdt_remove(struct platform_device *pdev)
 	struct csky_wdt_priv *priv = platform_get_drvdata(pdev);
 
 	csky_wdt_disable(&priv->wdd);
-
+	unregister_restart_handler(&priv->restart_handler);
 	watchdog_unregister_device(&priv->wdd);
 
 	return 0;

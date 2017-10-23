@@ -29,6 +29,7 @@ struct csky_wdt_priv {
 	struct watchdog_device	wdd;
 	void __iomem		*iobase;
 	struct clk		*clk_apb;
+	struct notifier_block	restart_handler;
 	int			irq;
 	u32			wdt_period;
 	unsigned long		wdt_cnts;
