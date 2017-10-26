@@ -177,6 +177,9 @@ static void csky_ttym_mbox_client_receive_message(struct mbox_client *client,
 						  void *message)
 {
 	struct ttym_data *ttymd = dev_get_drvdata(client->dev);
+	if (ttymd == NULL) {
+		return;
+	}
 	struct mbox_message *mssg = (struct mbox_message *)ttymd->rx_buffer;
 	int count, ret;
 	ulong flags;
