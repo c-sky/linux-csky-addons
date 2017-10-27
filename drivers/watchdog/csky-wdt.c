@@ -253,7 +253,7 @@ static int csky_wdt_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_wdt_of_match[] = {
-	{ .compatible = "csky,eragon-wdt"},
+	{ .compatible = "csky,wdt-v1"},
 	{},
 };
 

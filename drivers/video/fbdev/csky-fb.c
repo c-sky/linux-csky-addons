@@ -694,7 +694,7 @@ static int csky_fb_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_fb_of_dev_id[] = {
-	{ .compatible = "csky,eragon-lcdc", },
+	{ .compatible = "csky,lcdc-v1", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, csky_fb_of_dev_id);

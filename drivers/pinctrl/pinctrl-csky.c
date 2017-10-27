@@ -522,7 +522,7 @@ static const struct pinconf_ops csky_pinconf_ops = {
 };
 
 static const struct of_device_id csky_bank_match[] = {
-	{ .compatible = "csky,eragon-gpio-bank" },
+	{ .compatible = "csky,gpio-bank-v1" },
 	{},
 };
 
@@ -1183,7 +1183,7 @@ static int csky_get_bank_data(struct csky_pin_bank *bank,
 {
 	struct resource res;
 
-	if (!of_device_is_compatible(bank->of_node, "csky,eragon-gpio-bank")) {
+	if (!of_device_is_compatible(bank->of_node, "csky,gpio-bank-v1")) {
 		dev_err(info->dev, "Only 'eragon-gpio-bank' is supported\n");
 		return -ENODEV;
 	}
@@ -1327,7 +1327,7 @@ static struct csky_pin_ctrl eragon_pin_ctrl = {
 };
 
 static const struct of_device_id csky_pinctrl_dt_match[] = {
-	{ .compatible 	= "csky,eragon-pinctrl",
+	{ .compatible 	= "csky,pinctrl-v1",
 	  .data 	= (void *)&eragon_pin_ctrl },
 	{},
 };

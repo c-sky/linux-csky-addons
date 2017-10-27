@@ -660,7 +660,7 @@ static int csky_hdmi_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_hdmi_dt_ids[] = {
-	{ .compatible = "csky,eragon-hdmi",
+	{ .compatible = "csky,hdmi-v1",
 	},
 	{},
 };

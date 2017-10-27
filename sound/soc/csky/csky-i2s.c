@@ -636,7 +636,7 @@ static int csky_i2s_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_i2s_match[] = {
-	{ .compatible = "csky,eragon-i2s", },
+	{ .compatible = "csky,i2s-v1", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, csky_i2s_match);

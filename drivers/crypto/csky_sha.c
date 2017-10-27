@@ -978,7 +978,7 @@ static int csky_sha_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_sha_dt_ids[] = {
-	{ .compatible = "csky,csky-sha" },
+	{ .compatible = "csky,sha-v2" },
 	{ /* sentinel */ }
 };
 

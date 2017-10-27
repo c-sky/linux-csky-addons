@@ -254,7 +254,7 @@ static int csky_pwm_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_pwm_dt_ids[] = {
-	{ .compatible = "csky,eragon-pwm", },
+	{ .compatible = "csky,pwm-v1", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, csky_pwm_dt_ids);

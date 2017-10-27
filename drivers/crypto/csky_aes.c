@@ -640,7 +640,7 @@ static int csky_aes_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_aes_dt_ids[] = {
-	{ .compatible = "csky,csky-aes" },
+	{ .compatible = "csky,aes-v1" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, csky_aes_dt_ids);

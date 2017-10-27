@@ -771,7 +771,7 @@ static int csky_crypto_crc_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_crc_dt_ids[] = {
-	{ .compatible = "csky,csky-crc" },
+	{ .compatible = "csky,crc-v1" },
 	{ /* sentinel */ }
 };
 

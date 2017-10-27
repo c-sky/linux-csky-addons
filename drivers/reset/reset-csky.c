@@ -80,7 +80,7 @@ static const struct reset_control_ops csky_reset_ops = {
 };
 
 static const struct of_device_id csky_reset_dt_ids[] = {
-	{ .compatible = "csky,eragon-reset", },
+	{ .compatible = "csky,reset-v1", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, csky_reset_dt_ids);

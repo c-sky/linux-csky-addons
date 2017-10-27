@@ -618,7 +618,7 @@ static int csky_tdes_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_tdes_dt_ids[] = {
-	{ .compatible = "csky,csky-tdes" },
+	{ .compatible = "csky,tdes-v1" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, csky_tdes_dt_ids);

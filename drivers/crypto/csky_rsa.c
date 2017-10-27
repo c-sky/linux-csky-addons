@@ -1331,7 +1331,7 @@ static int csky_rsa_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_rsa_dt_ids[] = {
-	{ .compatible = "csky,csky-rsa" },
+	{ .compatible = "csky,rsa-v1" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, csky_rsa_dt_ids);
