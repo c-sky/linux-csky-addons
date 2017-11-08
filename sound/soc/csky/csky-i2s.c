@@ -48,12 +48,20 @@ static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 	unsigned int mclk;
 	int div;
 
-	if (word_size == 16)
-		mclk = 256 * rate;
-	else if (word_size == 24)
-		mclk = 384 * rate;
-	else
-		return -EINVAL;
+	if (i2s->sclk_ws_divider != 64) {
+		if (word_size == 16)
+			mclk = 256 * rate;
+		else if (word_size == 24)
+			mclk = 384 * rate;
+		else
+			return -EINVAL;
+	} else { /* sclk=64fs */
+		if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
+		    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J))
+			mclk = 8 * 64 * rate; /* mclk = 8 * sclk */
+		else
+			mclk = 4 * 64 * rate; /* mclk = 4 * sclk */
+	}
 
 	/* div0 = src_clk/(2*mclk) - 1; */
 	div = i2s->src_clk / 2 / mclk - 1;
@@ -73,21 +81,25 @@ static int csky_i2s_calc_fs_div(struct csky_i2s *i2s, unsigned int word_size)
 	unsigned int multi; /* sclk = multi * fs */
 	int div;
 
-	if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
-	    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
-		if (word_size == 16)
-			multi = 32; /* sclk=32fs */
-		else if (word_size == 24)
-			multi = 48; /* sclk=48fs */
-		else
-			return -EINVAL;
-	} else { /* SND_SOC_DAIFMT_RIGHT_J */
-		if (word_size == 16)
-			multi = 64; /* sclk=64fs */
-		else if (word_size == 24)
-			multi = 96; /* sclk=96fs */
-		else
-			return -EINVAL;
+	if (i2s->sclk_ws_divider != 64) {
+		if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
+		    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
+			if (word_size == 16)
+				multi = 32; /* sclk=32fs */
+			else if (word_size == 24)
+				multi = 48; /* sclk=48fs */
+			else
+				return -EINVAL;
+		} else { /* SND_SOC_DAIFMT_RIGHT_J */
+			if (word_size == 16)
+				multi = 64; /* sclk=64fs */
+			else if (word_size == 24)
+				multi = 96; /* sclk=96fs */
+			else
+				return -EINVAL;
+		}
+	} else {
+		multi = 64; /* sclk=64fs */
 	}
 
 	/* div2 = sclk/(2*fs) - 1 = multi/2 - 1; */
@@ -568,6 +580,9 @@ static int csky_i2s_probe(struct platform_device *pdev)
 	if (of_property_read_u32(pdev->dev.of_node, "dma-rx-threshold",
 				 &i2s->dma_rx_threshold) < 0)
 		i2s->dma_rx_threshold = DEFAULT_DMA_RX_THRESHOLD;
+
+	of_property_read_u32(pdev->dev.of_node, "sclk-ws-divider",
+			     &i2s->sclk_ws_divider);
 
 	i2s->playback_dma_data.maxburst =
 			i2s->fifo_depth - i2s->dma_tx_threshold;

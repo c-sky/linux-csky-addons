@@ -93,8 +93,8 @@
 #define IISCNF_OUT_AUDFMT_LEFT_J	(2 << 0)
 #define OUT_AUDFMT_MASK			0x3
 #define OUT_AUDFMT_SHIFT		0
-#define IISCNF_OUT_WS_POLARITY_NORMAL	(1 << 2)
-#define IISCNF_OUT_WS_POLARITY_INVERTED	(0 << 2)
+#define IISCNF_OUT_WS_POLARITY_NORMAL	(0 << 2)
+#define IISCNF_OUT_WS_POLARITY_INVERTED	(1 << 2)
 #define OUT_WS_POLARITY_MASK		0x1
 #define OUT_WS_POLARITY_SHIFT		2
 #define IISCNF_OUT_SAMPLE_SOURCE_VOICE	(1 << 3)
@@ -173,6 +173,7 @@ struct csky_i2s {
 	unsigned int clk_fs_44k; /* clock for 11.025k/22.05k/44.1k/88.2k fs */
 	unsigned int clk_fs_48k; /* clock for 8k/16k/32k/48k/96k fs */
 	unsigned int audio_fmt;
+	unsigned int sclk_ws_divider; /* sclk = sclk_ws_divider * wsclk */
 	struct snd_dmaengine_dai_dma_data playback_dma_data;
 
 	unsigned int fifo_depth; /* in words */
