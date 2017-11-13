@@ -28,6 +28,7 @@
 #include <video/of_videomode.h>
 #include <video/videomode.h>
 #include <linux/i2c.h>
+#include <sound/soc.h>
 
 #include "csky_hdmi.h"
 
@@ -62,6 +63,8 @@ struct csky_hdmi {
 	struct workqueue_struct *edid_workq;
 	struct work_struct edid_work;
 };
+
+static struct csky_hdmi *hdmi_p;
 
 static const char phy_dat[][PHY_DATA_SIZE] = {
 	/* PHY setting for TMDS clock 27 (480i, 480p) */
@@ -126,7 +129,15 @@ static int csky_hdmi_modeb_reset(struct csky_hdmi *hdmi)
 	u8 stat;
 
 	stat = hdmi_readb(hdmi, X00_SYSTEM_CONTROL);
-	if (!(stat & PWR_MOD_B_X00)) {
+	if (stat & PWR_MOD_A_X00) {
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
+	} else if (stat & PWR_MOD_E_X00) {
+		/* PS mode e -> d ->b ->a */
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_D_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_B_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_A_X00);
+		/* mode a -> mode b */
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
 	}
@@ -327,12 +338,24 @@ static int csky_hdmi_video_set_format(struct csky_hdmi *hdmi)
 
 	hdmi_writeb(hdmi,XAF_HDCP_CTRL, val);
 
+	/* set AUDIO_INFO_FRAME */
+	hdmi_writeb(hdmi,X42_AUTO_CHECKSUM,
+		    hdmi_readb(hdmi, X42_AUTO_CHECKSUM) & AUTO_CHECKSUM_X42);
+	hdmi_writeb(hdmi,X5F_PACKET_INDEX, AUDIO_INFO_PKT_X5F);
+	hdmi_writeb(hdmi,X60_PKT_HB0, HB0_AUD_TYPE_X60);
+	hdmi_writeb(hdmi,X61_PKT_HB1, HB1_AUD_VERSION_X61);
+	hdmi_writeb(hdmi,X62_PKT_HB2, HB2_AUD_LENTH_X62);
+	hdmi_writeb(hdmi,X63_PKT_PB0, PB0_AUD_CHECKSUM_X63);
+	hdmi_writeb(hdmi,X64_PKT_PB1, PB1_AUD_2CH_X64);
+
 	/* set AVI InfoFrame */
 	hdmi_writeb(hdmi, X5F_PACKET_INDEX, AVI_INFO_PKT_X5F);
 	hdmi_writeb(hdmi, X60_PKT_HB0, HB0_AVI_TYPE_X60);
 	hdmi_writeb(hdmi, X61_PKT_HB1, HB1_VERSION_X61);
 	hdmi_writeb(hdmi, X62_PKT_HB2, HB2_LENTH_X62);
 	hdmi_writeb(hdmi, X67_PKT_PB4, hdmi->hdmi_data.vid & 0x7f);
+	hdmi_writeb(hdmi, X63_PKT_PB0,
+		    PB0_AVI_CHECKSUM_X63 - hdmi_readb(hdmi, X67_PKT_PB4));
 
 	return 0;
 }
@@ -452,41 +475,24 @@ static irqreturn_t csky_hdmi_edid_irq(struct csky_hdmi *hdmi, u8 int_stat)
 static int csky_hdmi_unplug_irq(struct csky_hdmi *hdmi)
 {
 	u8 vidset;
-	u8 int_stat;
 
-	int_stat = hdmi_readb(hdmi, XDF_HPG_STATUS);
-	if (!(int_stat & HPG_MSENS_PRT_XDF)) {
-		/* disable video output */
-		vidset = hdmi_readb(hdmi, X45_VIDEO2) | NOVIDEO_X45;
-		hdmi_writeb(hdmi, X45_VIDEO2, vidset);
-		/* enable hotplug int */
-		hdmi_writeb(hdmi, X92_INT_MASK1, HPG_MSK_X92 | MSENS_MSK_X92);
-		/* PS mode e -> d ->b ->a */
-		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_D_X00);
-		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_B_X00);
-		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_A_X00);
-		if (hdmi->edid_workq)
-			flush_workqueue(hdmi->edid_workq);
-	}
-	else
-		dev_err(hdmi->dev, "Unplug error\n");
+	/* disable video output */
+	vidset = hdmi_readb(hdmi, X45_VIDEO2);
+	vidset |= (NOVIDEO_X45 | NOAUDIO_X45);
+	hdmi_writeb(hdmi, X45_VIDEO2, vidset);
+	/* enable hotplug int */
+	hdmi_writeb(hdmi, X92_INT_MASK1, HPG_MSK_X92 | MSENS_MSK_X92);
+	if (hdmi->edid_workq)
+		flush_workqueue(hdmi->edid_workq);
 
 	return 0;
 }
 
 static int csky_hdmi_hotplug_irq(struct csky_hdmi *hdmi)
 {
-	u8 int_stat;
-
-	int_stat = hdmi_readb(hdmi, XDF_HPG_STATUS);
-	/* hotplug and unplug */
-	if (int_stat & HPG_MSENS_PRT_XDF) {
-		hdmi->edid_info.edid_retry = HDMI_EDID_RETRY_TIMES;
-		hdmi->edid_info.ex_flag = 0;
-		csky_hdmi_edid_start(hdmi);
-	}
-	else
-		dev_err(hdmi->dev, "Hotplug error\n");
+	hdmi->edid_info.edid_retry = HDMI_EDID_RETRY_TIMES;
+	hdmi->edid_info.ex_flag = 0;
+	csky_hdmi_edid_start(hdmi);
 
 	return 0;
 }
@@ -505,10 +511,15 @@ static irqreturn_t csky_hdmi_irq(int irq, void *dev_id)
 
 	if (int_stat & EDID_INT_X94)
 		ret = csky_hdmi_edid_irq(hdmi, int_stat);
-	else if (int_stat & HPG_MSENS_INT_X94)
-		csky_hdmi_hotplug_irq(hdmi);
+	else if (int_stat & HPG_MSENS_INT_X94) {
+		int_stat = hdmi_readb(hdmi, XDF_HPG_STATUS);
+		if (int_stat & HPG_MSENS_PRT_XDF)
+			csky_hdmi_hotplug_irq(hdmi);
+		else
+			csky_hdmi_unplug_irq(hdmi);
+	}
 	else
-		csky_hdmi_unplug_irq(hdmi);
+		printk("debug other interupt\n");
 
 	return ret;
 }
@@ -522,8 +533,8 @@ static void csky_hdmi_main_work(struct work_struct *work)
 
 	hdmi = container_of(work, struct csky_hdmi, edid_work);
 	chk_sum = csky_hdmi_edid_read_block(hdmi);
-	if (chk_sum != 0)
-		dev_err(hdmi->dev, "EDID info is error\n");
+	if (chk_sum == 0)
+		dev_err(hdmi->dev, "EDID info is right\n");
 	flag = hdmi->edid_info.ex_flag;
 
 	if (flag == 0) {
@@ -543,7 +554,6 @@ static int csky_timing_data_init(struct csky_hdmi *hdmi)
 {
 	/* get timing from dts */
 	int ret;
-	int vid;
 	struct device *dev = hdmi->dev;
 	struct videomode vm;
 	struct of_phandle_args args;
@@ -630,6 +640,8 @@ static int csky_hdmi_probe(struct platform_device *pdev)
 	if (IS_ERR(hdmi->regs))
 		return PTR_ERR(hdmi->regs);
 
+	hdmi_p = hdmi;
+
 	hdmi->irq = platform_get_irq(pdev, 0);
 	if (hdmi->irq < 0)
 		return hdmi->irq;
@@ -646,6 +658,52 @@ static int csky_hdmi_probe(struct platform_device *pdev)
 
 	return ret;
 }
+
+void csky_hdmi_audio_config(unsigned int sample_rate, unsigned int audio_fmt)
+{
+	unsigned int param_n;
+
+	hdmi_writeb(hdmi_p, X45_VIDEO2, AUDIORST_X45 | NOAUDIO_X45);
+	switch (sample_rate) {
+	case 44100:
+		param_n = HDMI_44100_PARAM_N;
+		hdmi_writeb(hdmi_p, X15_AVSET1, CUR_SMP_44100_X15);
+		hdmi_writeb(hdmi_p, X11_ASTATUS1, ORI_SMP_44100_X11);
+		hdmi_writeb(hdmi_p, X01_N19_16, (param_n >> 0) & HDMI_REG_MSK);
+		hdmi_writeb(hdmi_p, X02_N15_8, (param_n >> 8) & HDMI_REG_MSK);
+		hdmi_writeb(hdmi_p, X03_N7_03, (param_n >> 16) & HDMI_REG_MSK);
+		break;
+	case 48000:
+		param_n = HDMI_48000_PARAM_N;
+		hdmi_writeb(hdmi_p, X15_AVSET1, CUR_SMP_48000_X15);
+		hdmi_writeb(hdmi_p, X11_ASTATUS1, ORI_SMP_48000_X11);
+		hdmi_writeb(hdmi_p, X01_N19_16, (param_n >> 0) & HDMI_REG_MSK);
+		hdmi_writeb(hdmi_p, X02_N15_8, (param_n >> 8) & HDMI_REG_MSK);
+		hdmi_writeb(hdmi_p, X03_N7_03, (param_n >> 16) & HDMI_REG_MSK);
+		break;
+	default:
+		break;
+	}
+
+	switch (audio_fmt) {
+	case SND_SOC_DAIFMT_I2S:
+		hdmi_writeb(hdmi_p, X0C_I2S_MODE, I2S_MOD_X0C);
+		break;
+	case SND_SOC_DAIFMT_LEFT_J:
+		hdmi_writeb(hdmi_p, X0C_I2S_MODE, LEFT_J_MOD_X0C);
+		break;
+	case SND_SOC_DAIFMT_RIGHT_J:
+		hdmi_writeb(hdmi_p, X0C_I2S_MODE, RIGHT_J_MOD_X0C);
+		break;
+	default:
+		break;
+	}
+
+	hdmi_writeb(hdmi_p, X45_VIDEO2,
+		    hdmi_readb(hdmi_p, X45_VIDEO2)
+		    & (~(AUDIORST_X45 | NOAUDIO_X45)));
+}
+EXPORT_SYMBOL(csky_hdmi_audio_config);
 
 static int csky_hdmi_remove(struct platform_device *pdev)
 {

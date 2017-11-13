@@ -170,6 +170,7 @@ static int csky_i2s_set_clk_rate(struct csky_i2s *i2s,
 		}
 	}
 
+	i2s->sample_rate = rate;
 	mclk_div = csky_i2s_calc_mclk_div(i2s, rate, word_size);
 	if (mclk_div < 0)
 		return -EINVAL;
@@ -293,6 +294,11 @@ static int csky_i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	return 0;
 }
 
+/* apply to hdmi */
+#ifdef CONFIG_HDMI
+extern void csky_hdmi_audio_config(unsigned int sample_rate, unsigned int audio_fmt);
+#endif
+
 static void csky_i2s_start_playback(struct csky_i2s *i2s)
 {
 	if (i2s->use_pio)
@@ -301,6 +307,12 @@ static void csky_i2s_start_playback(struct csky_i2s *i2s)
 		csky_i2s_writel(i2s, IIS_DMACR, DMACR_EN_TX_DMA);
 
 	csky_i2s_writel(i2s, IIS_AUDIOEN, AUDIOEN_IIS_EN);
+
+#ifdef CONFIG_HDMI
+	/* applay to hdmi audio */
+	if (i2s->config_hdmi == 1)
+		csky_hdmi_audio_config(i2s->sample_rate, i2s->audio_fmt);
+#endif
 }
 
 static void csky_i2s_stop_playback(struct csky_i2s *i2s)
@@ -625,6 +637,11 @@ static int csky_i2s_probe(struct platform_device *pdev)
 			goto err_clk;
 		}
 	}
+
+	if (of_property_read_bool(pdev->dev.of_node, "config-hdmi"))
+		i2s->config_hdmi = 1;
+	else
+		i2s->config_hdmi = 0;
 
 	return 0;
 

@@ -185,7 +185,15 @@
 #define PWR_MODB_RST_X00	(PWR_MOD_B_X00 | PLL_RST_X00)
 #define PWR_MODB_RSTB_X00	(PWR_MOD_B_X00 | PLLB_RST_X00)
 
+#define I2S_MOD_X0C		0x04
+#define LEFT_J_MOD_X0C		0x06
+#define RIGHT_J_MOD_X0C		0x05
+
 #define FMT_YCC422_X15		BIT(1)
+#define CUR_SMP_44100_X15	0x0
+#define CUR_SMP_48000_X15	BIT(5)
+#define ORI_SMP_44100_X11	(0xf << 0)
+#define ORI_SMP_48000_X11	(0xd << 0)
 #define FMT_MASK_X15		GENMASK(3, 0)
 
 #define SPACE_YCC_X16		BIT(0)
@@ -219,6 +227,8 @@
 #define CTS_DEBUG_X3B		BIT(7)	/* Debug bit for CTS timing */
 #define CD_MASK_X3B		GENMASK(6, 6)
 
+#define AUTO_CHECKSUM_X42	GENMASK(0, 0)
+
 #define NOVIDEO_X45		BIT(0)	/* Send black video */
 #define NOAUDIO_X45		BIT(1)	/* Send no audio */
 #define AUDIORST_X45		BIT(2)	/* audio capture logic reset */
@@ -238,12 +248,19 @@
 #define MPEG_SRC_INFO_PKT_X5F	(BIT(0) | BIT(3))
 
 #define HB0_AVI_TYPE_X60	0x82
+#define HB0_AUD_TYPE_X60	0x84
 #define HB1_VERSION_X61		0x02
+#define HB1_AUD_VERSION_X61	0x01
 #define HB2_LENTH_X62		0x0d
+#define HB2_AUD_LENTH_X62	0x0a
+
+#define PB0_AVI_CHECKSUM_X63	0x6f
+#define PB0_AUD_CHECKSUM_X63	0x70
 
 #define PB1_YCC422_X64		BIT(5)	/* set PB1 ycc422*/
 #define PB1_YCC444_X64		BIT(6)	/* set PB1 ycc444 */
 #define PB1_MASK_X64		GENMASK(7, 5)
+#define PB1_AUD_2CH_X64		BIT(0) /* two channel audio */
 
 #define EDID_ERR_MSK_X92	BIT(1)	/* EDID error detect interrupt mask */
 #define EDID_RDY_MSK_X92	BIT(2)	/* EDID ready interrupt mask */
@@ -326,9 +343,12 @@
 #define HDMI_EDID_RETRY_TIMES	10
 #define HDMI_EDID_BLK_SIZE	128
 #define HDMI_EDID_EXT_INDEX	126
+#define HDMI_44100_PARAM_N	0x1880
+#define HDMI_48000_PARAM_N	0x1800
 #define PHY_DATA_SIZE		10
 #define HB0_TO_PB27_SIZE	31
 #define HDMI_INFO_FRAME_SIZE	0x11
+#define HDMI_REG_MSK		0xff
 
 /* Video setting constants */
 #define VID_01_640X480P		1

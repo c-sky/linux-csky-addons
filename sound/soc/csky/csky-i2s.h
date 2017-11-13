@@ -172,7 +172,9 @@ struct csky_i2s {
 	struct clk *i2s_clk_gate;
 	unsigned int clk_fs_44k; /* clock for 11.025k/22.05k/44.1k/88.2k fs */
 	unsigned int clk_fs_48k; /* clock for 8k/16k/32k/48k/96k fs */
+	unsigned int sample_rate;
 	unsigned int audio_fmt;
+	unsigned int config_hdmi;
 	unsigned int sclk_ws_divider; /* sclk = sclk_ws_divider * wsclk */
 	struct snd_dmaengine_dai_dma_data playback_dma_data;
 
