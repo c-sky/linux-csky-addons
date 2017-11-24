@@ -9,3 +9,25 @@ config CSKY_HDMI
 	help
 	  This enables the HDMI driver for C-SKY.
 
+config CSKY_DRM
+	bool "C-SKY DRM support"
+	depends on DRM
+	select DRM_KMS_CMA_HELPER
+	select DRM_KMS_HELPER
+	select DRM_GEM_CMA_HELPER
+	select DRM_FBDEV_EMULATION
+	help
+	  This enables the C-SKY DRM support.
+
+config CSKY_DRM_HDMI
+	bool "C-SKY DRM HDMI driver"
+	depends on CSKY_DRM
+	help
+	  This enables the C-SKY DRM HDMI driver.
+
+config CSKY_LCDC_CRTC
+	bool "C-SKY DRM LCDC driver"
+	depends on CSKY_DRM
+	help
+	  This enables the C-SKY DRM LCDC driver.
+
