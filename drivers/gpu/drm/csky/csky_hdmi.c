@@ -53,7 +53,6 @@ struct csky_hdmi {
 	struct device *dev;
 
 	int irq;
-	spinlock_t edid_lock;
 	void __iomem *regs;
 
 	struct videomode vm;
@@ -184,7 +183,6 @@ static int csky_hdmi_edid_start(struct csky_hdmi *hdmi)
 	u8 int_mask;
 	unsigned int flag;
 
-	spin_lock_irq(&hdmi->edid_lock);
 	flag = hdmi->edid_info.ex_flag;
 	/* enable EDID interrupt */
 	int_mask = hdmi_readb(hdmi, X92_INT_MASK1);
@@ -194,7 +192,6 @@ static int csky_hdmi_edid_start(struct csky_hdmi *hdmi)
 	hdmi_writeb(hdmi, XC5_EDID_WD_ADDR, edid_word);
 	/* set EDID segment pointer */
 	hdmi_writeb(hdmi, XC4_SEG_PTR, 0x00);
-	spin_unlock_irq(&hdmi->edid_lock);
 
 	return 0;
 }
@@ -482,8 +479,6 @@ static int csky_hdmi_unplug_irq(struct csky_hdmi *hdmi)
 	hdmi_writeb(hdmi, X45_VIDEO2, vidset);
 	/* enable hotplug int */
 	hdmi_writeb(hdmi, X92_INT_MASK1, HPG_MSK_X92 | MSENS_MSK_X92);
-	if (hdmi->edid_workq)
-		flush_workqueue(hdmi->edid_workq);
 
 	return 0;
 }
@@ -649,7 +644,7 @@ static int csky_hdmi_probe(struct platform_device *pdev)
 	dev_set_drvdata(dev, hdmi);
 	ret = csky_hdmi_init(hdmi);
 	if (ret)
-		return ERR_PTR(ret);
+		return ret;
 
 	ret = devm_request_threaded_irq(dev, hdmi->irq, csky_hdmi_irq,
 					csky_hdmi_work_irq,
