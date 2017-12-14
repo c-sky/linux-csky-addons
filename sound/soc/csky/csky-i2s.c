@@ -41,29 +41,65 @@
 #define DEFAULT_DMA_TX_THRESHOLD	16
 #define DEFAULT_DMA_RX_THRESHOLD	16
 
+static const struct of_device_id csky_i2s_match[];
+
+/*
+ * For csky,i2s-v1:
+ *
+ *              (left_j and i2s)
+ *            |----- 1/8 --------|            -------
+ *    mclk ---|                  |--- sclk ---| div |--- fs
+ *            |----- 1/4 --------|            -------
+ *              (right_j)
+ *
+ * For csky,i2s-v1.1:
+ *            -------            -------
+ *    mclk ---| div |--- sclk ---| div |--- fs
+ *            -------            -------
+ */
+static const struct csky_i2s_params params_csky_i2s_v1 = {
+	.has_mclk_sclk_div	= false,
+};
+static const struct csky_i2s_params params_csky_i2s_v1_1 = {
+	.has_mclk_sclk_div	= true,
+};
+
 static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 				  unsigned int rate,
 				  unsigned int word_size)
 {
 	unsigned int mclk;
 	int div;
+	unsigned int mclk_fs_div;
 
-	if (i2s->sclk_ws_divider != 64) {
+	if (i2s->params.has_mclk_sclk_div) {
 		if (word_size == 16)
-			mclk = 256 * rate;
+			mclk_fs_div = 256;
 		else if (word_size == 24)
-			mclk = 384 * rate;
+			mclk_fs_div = 384;
 		else
 			return -EINVAL;
-	} else { /* sclk=64fs */
-		if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
-		    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J))
-			mclk = 8 * 64 * rate; /* mclk = 8 * sclk */
-		else
-			mclk = 4 * 64 * rate; /* mclk = 4 * sclk */
+	} else { /* For csky,i2s-v1 */
+		if (i2s->sclk_fs_divider != 64) {
+			if (word_size == 16)
+				mclk_fs_div = 256;
+			else if (word_size == 24)
+				mclk_fs_div = 384;
+			else
+				return -EINVAL;
+		} else {
+			if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
+			    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J))
+				mclk_fs_div = 8 * 64; /* mclk=8*sclk=8*64fs */
+			else
+				mclk_fs_div = 4 * 64; /* mclk=4*sclk=4*64fs */
+		}
 	}
 
-	/* div0 = src_clk/(2*mclk) - 1; */
+	i2s->mclk_fs_divider = mclk_fs_div;
+	mclk = mclk_fs_div * rate;
+
+	/* div = src_clk/(2*mclk) - 1; */
 	div = i2s->src_clk / 2 / mclk - 1;
 	return div;
 }
@@ -81,28 +117,51 @@ static int csky_i2s_calc_fs_div(struct csky_i2s *i2s, unsigned int word_size)
 	unsigned int multi; /* sclk = multi * fs */
 	int div;
 
-	if (i2s->sclk_ws_divider != 64) {
-		if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
-		    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
+	if (i2s->sclk_fs_divider != 64) {
+		if (i2s->params.has_mclk_sclk_div) {
 			if (word_size == 16)
 				multi = 32; /* sclk=32fs */
 			else if (word_size == 24)
 				multi = 48; /* sclk=48fs */
 			else
 				return -EINVAL;
-		} else { /* SND_SOC_DAIFMT_RIGHT_J */
-			if (word_size == 16)
-				multi = 64; /* sclk=64fs */
-			else if (word_size == 24)
-				multi = 96; /* sclk=96fs */
-			else
-				return -EINVAL;
+		} else { /* For csky,i2s-v1 */
+			if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
+			    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
+				if (word_size == 16)
+					multi = 32; /* sclk=32fs */
+				else if (word_size == 24)
+					multi = 48; /* sclk=48fs */
+				else
+					return -EINVAL;
+			} else { /* RIGHT_J */
+				if (word_size == 16)
+					multi = 64; /* sclk=64fs */
+				else if (word_size == 24)
+					multi = 96; /* sclk=96fs */
+				else
+					return -EINVAL;
+			}
 		}
 	} else {
 		multi = 64; /* sclk=64fs */
 	}
 
-	/* div2 = sclk/(2*fs) - 1 = multi/2 - 1; */
+	i2s->sclk_fs_divider = multi;
+
+	/* div = sclk/(2*fs) - 1 = multi/2 - 1; */
+	div = multi / 2 - 1;
+	return div;
+}
+
+static int csky_i2s_calc_sclk_div(struct csky_i2s *i2s)
+{
+	unsigned int multi; /* mclk = multi * sclk */
+	int div;
+
+	multi = i2s->mclk_fs_divider / i2s->sclk_fs_divider;
+
+	/* div = mclk/(2*sclk) - 1 = multi/2 - 1; */
 	div = multi / 2 - 1;
 	return div;
 }
@@ -132,7 +191,7 @@ static int csky_i2s_calc_refclk_div(struct csky_i2s *i2s, unsigned int rate)
 		return -EINVAL;
 	}
 
-	/* div3 = src_clk / (ref_clk*2) - 1; */
+	/* div = src_clk / (ref_clk*2) - 1; */
 	div = i2s->src_clk / 2 / ref_clk - 1;
 	return div;
 }
@@ -141,7 +200,7 @@ static int csky_i2s_set_clk_rate(struct csky_i2s *i2s,
 				 unsigned int rate,
 				 unsigned int word_size)
 {
-	int mclk_div, spdifclk_div, fs_div, refclk_div;
+	int mclk_div, spdifclk_div, fs_div, refclk_div, sclk_div;
 	int ret;
 
 	if (!IS_ERR_OR_NULL(i2s->i2s_clk)) {
@@ -171,16 +230,23 @@ static int csky_i2s_set_clk_rate(struct csky_i2s *i2s,
 	}
 
 	i2s->sample_rate = rate;
+
+	fs_div = csky_i2s_calc_fs_div(i2s, word_size);
+	if (fs_div < 0)
+		return -EINVAL;
+
 	mclk_div = csky_i2s_calc_mclk_div(i2s, rate, word_size);
 	if (mclk_div < 0)
 		return -EINVAL;
 
+	if (i2s->params.has_mclk_sclk_div) {
+		sclk_div = csky_i2s_calc_sclk_div(i2s);
+		if (sclk_div < 0)
+			return -EINVAL;
+	}
+
 	spdifclk_div = csky_i2s_calc_spdifclk_div(i2s, rate, word_size);
 	if (spdifclk_div < 0)
-		return -EINVAL;
-
-	fs_div = csky_i2s_calc_fs_div(i2s, word_size);
-	if (fs_div < 0)
 		return -EINVAL;
 
 	refclk_div = csky_i2s_calc_refclk_div(i2s, rate);
@@ -191,6 +257,9 @@ static int csky_i2s_set_clk_rate(struct csky_i2s *i2s,
 	csky_i2s_writel(i2s, IIS_DIV1_LEVEL, spdifclk_div);
 	csky_i2s_writel(i2s, IIS_DIV2_LEVEL, fs_div);
 	csky_i2s_writel(i2s, IIS_DIV3_LEVEL, refclk_div);
+	if (i2s->params.has_mclk_sclk_div)
+		csky_i2s_writel(i2s, IIS_DIV4_LEVEL, sclk_div);
+
 	return 0;
 }
 
@@ -486,6 +555,7 @@ static irqreturn_t csky_i2s_irq_handler(int irq, void *dev_id)
 
 static int csky_i2s_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *match;
 	struct csky_i2s *i2s;
 	struct resource *res;
 	struct snd_dmaengine_pcm_config *pcm_conf;
@@ -496,6 +566,10 @@ static int csky_i2s_probe(struct platform_device *pdev)
 	if (!i2s)
 		return -ENOMEM;
 	platform_set_drvdata(pdev, i2s);
+
+	match = of_match_device(csky_i2s_match, &pdev->dev);
+	if (match && match->data)
+		memcpy(&i2s->params, match->data, sizeof(i2s->params));
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	i2s->regs = devm_ioremap_resource(&pdev->dev, res);
@@ -593,8 +667,8 @@ static int csky_i2s_probe(struct platform_device *pdev)
 				 &i2s->dma_rx_threshold) < 0)
 		i2s->dma_rx_threshold = DEFAULT_DMA_RX_THRESHOLD;
 
-	of_property_read_u32(pdev->dev.of_node, "sclk-ws-divider",
-			     &i2s->sclk_ws_divider);
+	of_property_read_u32(pdev->dev.of_node, "sclk-fs-divider",
+			     &i2s->sclk_fs_divider);
 
 	i2s->playback_dma_data.maxburst =
 			i2s->fifo_depth - i2s->dma_tx_threshold;
@@ -668,7 +742,8 @@ static int csky_i2s_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id csky_i2s_match[] = {
-	{ .compatible = "csky,i2s-v1", },
+	{ .compatible = "csky,i2s-v1", .data = &params_csky_i2s_v1 },
+	{ .compatible = "csky,i2s-v1.1", .data = &params_csky_i2s_v1_1 },
 	{}
 };
 MODULE_DEVICE_TABLE(of, csky_i2s_match);

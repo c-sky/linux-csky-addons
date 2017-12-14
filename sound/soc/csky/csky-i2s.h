@@ -53,6 +53,7 @@
 #define IIS_DIV1_LEVEL	0x94	/* clock divider for spdif_clk */
 #define IIS_DIV2_LEVEL	0x98	/* clock divider for wsclk */
 #define IIS_DIV3_LEVEL	0x9C	/* clock divider for ref_clk */
+#define IIS_DIV4_LEVEL	0xA0	/* clock divider for sclk */
 
 /* Bitfields in IIS_AUDIOEN */
 #define AUDIOEN_IIS_EN		(1 << 0)	/* IIS enable */
@@ -163,21 +164,32 @@
 			 IIS_MODEINT_INPUT_FS_CHANGE | \
 			 IIS_MODEINT_SPDIF_SCSR_DATA_CHANGE)
 
+struct csky_i2s_params {
+	bool	has_mclk_sclk_div; /* has mclk-to-sclk divider register? */
+};
+
 struct csky_i2s {
 	struct device *dev;
 	void __iomem *regs;
 	int irq;
+
+	/* clock source */
 	unsigned int src_clk;
 	struct clk *i2s_clk;
 	struct clk *i2s_clk_gate;
-	unsigned int clk_fs_44k; /* clock for 11.025k/22.05k/44.1k/88.2k fs */
-	unsigned int clk_fs_48k; /* clock for 8k/16k/32k/48k/96k fs */
+	unsigned int clk_fs_44k; /* clock for 44.1k fs */
+	unsigned int clk_fs_48k; /* clock for 48k fs */
+
+	/* audio clock & format */
+	unsigned int mclk;
 	unsigned int sample_rate;
 	unsigned int audio_fmt;
-	unsigned int config_hdmi;
-	unsigned int sclk_ws_divider; /* sclk = sclk_ws_divider * wsclk */
-	struct snd_dmaengine_dai_dma_data playback_dma_data;
 
+	/* clock dividers */
+	unsigned int mclk_fs_divider; /* mclk = div * fs */
+	unsigned int sclk_fs_divider; /* sclk = div * fs */
+
+	/* FIFO */
 	unsigned int fifo_depth; /* in words */
 	unsigned int intr_tx_threshold;
 	unsigned int intr_rx_threshold;
@@ -192,6 +204,12 @@ struct csky_i2s {
 			      unsigned int tx_ptr,
 			      bool *period_elapsed);
 	unsigned int tx_ptr;
+
+	/* HDMI */
+	unsigned int config_hdmi;
+
+	struct snd_dmaengine_dai_dma_data playback_dma_data;
+	struct csky_i2s_params params;
 };
 
 #define csky_i2s_readl(i2s, offset) \
