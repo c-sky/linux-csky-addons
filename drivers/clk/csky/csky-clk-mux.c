@@ -38,7 +38,8 @@ static void __init csky_clk_mux_init(struct device_node *node)
 	void __iomem *reg;
 	u32 bit_shift;
 	u32 bit_width;
-	unsigned long flags;
+	unsigned long flags = 0;
+	u8 clk_mux_flags = 0;
 
 	reg = of_iomap(node, 0);
 	if (!reg) {
@@ -67,13 +68,13 @@ static void __init csky_clk_mux_init(struct device_node *node)
 
 	flags = CLK_SET_RATE_PARENT;
 	if (of_property_read_bool(node, "read-only"))
-		flags |= CLK_MUX_READ_ONLY;
+		clk_mux_flags |= CLK_MUX_READ_ONLY;
 
 	clk = clk_register_mux(NULL, clk_name,
 			       parents, num_parents,
 			       flags,
 			       reg, bit_shift, bit_width,
-			       0, &clk_mux_lock);
+			       clk_mux_flags, &clk_mux_lock);
 	if (IS_ERR(clk)) {
 		pr_err("%s: failed to register clk %s: %ld\n", __func__,
 		       clk_name, PTR_ERR(clk));
