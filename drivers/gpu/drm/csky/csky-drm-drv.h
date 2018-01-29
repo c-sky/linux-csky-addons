@@ -38,8 +38,14 @@ struct csky_drm_crtc {
 	void __iomem *regs;
 	struct clk *clk;
 	u32 hclk_freq;		/* hclk frequence */
+	int irq;
 	unsigned int	pipe;
 	unsigned int pcd;
+	bool is_enabled;
+	/* one time only one process allowed to config the register */
+	spinlock_t reg_lock;
+	/* lock vop irq reg */
+	spinlock_t irq_lock;
 };
 
 struct csky_drm_plane {
@@ -75,9 +81,14 @@ struct csky_drm_private {
 	struct drm_gem_object *fbdev_bo;
 	const struct csky_crtc_funcs *crtc_funcs[CSKY_MAX_CRTC];
 	struct drm_atomic_state *state;
+	struct csky_drm_crtc *csky_crtc;
 
 	struct list_head psr_list;
 	spinlock_t psr_list_lock;
 };
+
+int csky_register_crtc_funcs(struct drm_crtc *crtc,
+				 const struct csky_crtc_funcs *crtc_funcs);
+void csky_unregister_crtc_funcs(struct drm_crtc *crtc);
 
 #endif /* _CSKY_DRM_DRV_H_ */

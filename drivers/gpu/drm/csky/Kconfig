@@ -2,6 +2,13 @@
 # C-SKY DRM  driver configuration
 #
 
+choice
+	prompt "DRM default mode"
+	default CSKY_HDMI
+	depends on OF
+	help
+	You can set here the default mode of DRM from
+	the available modes. Don't touch if unsure.
 config CSKY_HDMI
 	bool "C-SKY HDMI Driver"
 	depends on OF
@@ -18,6 +25,7 @@ config CSKY_DRM
 	select DRM_FBDEV_EMULATION
 	help
 	  This enables the C-SKY DRM support.
+endchoice
 
 config CSKY_DRM_HDMI
 	bool "C-SKY DRM HDMI driver"
@@ -30,4 +38,3 @@ config CSKY_LCDC_CRTC
 	depends on CSKY_DRM
 	help
 	  This enables the C-SKY DRM LCDC driver.
-

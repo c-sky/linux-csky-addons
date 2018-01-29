@@ -52,6 +52,7 @@
 
 /* LEN, LCD controller Enable */
 #define CSKY_LCDCON_LEN			1
+#define CSKY_LCDCON_LDIS		GENMASK(0, 0)
 /*
  * CMS, *STN LCD* color/monochrome select
  * 0: Monochrome
@@ -132,3 +133,4 @@
 struct csky_drm_crtc *csky_drm_crtc_create(struct drm_device *drm_dev,
 					struct drm_plane *plane,
 					int pipe);
+#endif /* _CSKY_DRM_CRTC_H_ */

@@ -19,6 +19,10 @@
 #define __CSKY_PANEL_H__
 
 #define CSKY_LCD_PBASE 0x10
+#define CSKY_LCD_PBASE_Y	0x48
+#define CSKY_LCD_PBASE_U	0x50
+#define CSKY_LCD_PBASE_V	0x58
+
 
 /* sub-module for generic lcd panel output */
 struct drm_plane *csky_plane_init(struct drm_device *dev,

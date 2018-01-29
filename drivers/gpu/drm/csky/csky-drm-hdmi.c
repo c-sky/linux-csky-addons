@@ -131,11 +131,16 @@ static const char phy_dat[][PHY_DATA_SIZE] = {
 
 static u8 hdmi_readb(struct csky_hdmi *hdmi, u8 offset)
 {
-	return ioread32(hdmi->regs + (offset));
+    u8 val;
+    val = ioread32(hdmi->regs + (offset));
+    //printk("++++hdmi_readb offset 0x%x:0x%x\n", offset, val);
+    return val;
+	//return ioread32(hdmi->regs + (offset));
 }
 
 static void hdmi_writeb(struct csky_hdmi *hdmi, u8 offset, u8 val)
 {
+    //printk("++++hdmi_writeb offset 0x%x:0x%x\n", offset, val);
 	iowrite32(val, hdmi->regs + (offset));
 }
 
@@ -243,40 +248,60 @@ static irqreturn_t csky_hdmi_hotplug_irq(int irq, void *dev_id)
 {
 	struct csky_hdmi *hdmi = dev_id;
 
-	//drm_helper_hpd_irq_event(hdmi->connector.dev);
 	printk("++++csky_hdmi_hotplug_irq\n");
+	//drm_helper_hpd_irq_event(hdmi->connector.dev);
 	drm_kms_helper_hotplug_event(hdmi->connector.dev);
 
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t csky_hdmi_ddc_irq(struct csky_hdmi *hdmi)
+static irqreturn_t csky_hdmi_ddc_irq(struct csky_hdmi *hdmi, u8 stat)
 {
 	struct csky_hdmi_ddc *ddc = hdmi->ddc;
-	u8 stat;
 
-	stat = hdmi_readb(hdmi, X94_INT_STATUS1);
 	if (stat & EDID_INT_X94) {
 		complete(&ddc->cmp);
-		return IRQ_WAKE_THREAD;
+		return IRQ_HANDLED;
 	}
 
 	return IRQ_NONE;
+}
+
+static int csky_hdmi_modeb_reset(struct csky_hdmi *hdmi)
+{
+	u8 stat;
+
+	stat = hdmi_readb(hdmi, X00_SYSTEM_CONTROL);
+	if (stat & PWR_MOD_A_X00) {
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
+	} else if (stat & PWR_MOD_E_X00) {
+		/* PS mode e -> d ->b ->a */
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_D_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_B_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_A_X00);
+		/* mode a -> mode b */
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
+	}
+
+	return 0;
 }
 
 static irqreturn_t csky_hdmi_hard_irq(int irq, void *dev_id)
 {
 	struct csky_hdmi *hdmi = dev_id;
 	irqreturn_t ret = IRQ_NONE;
-	u8 interrupt;
-
-	if (hdmi->ddc)
-		ret = csky_hdmi_ddc_irq(hdmi);
-
-	interrupt = hdmi_readb(hdmi, X94_INT_STATUS1);
+	u8 int_stat;
+    csky_hdmi_modeb_reset(hdmi);
+	int_stat = hdmi_readb(hdmi, X94_INT_STATUS1);
 	hdmi_writeb(hdmi, X94_INT_STATUS1, INT_CLR_X94);
 	hdmi_writeb(hdmi, X95_INT_STATUS2, INT_CLR_X95);
-	if (interrupt & HPG_MSENS_INT_X94)
+
+	if (hdmi->ddc)
+		ret = csky_hdmi_ddc_irq(hdmi, int_stat);
+ 
+	if (int_stat & HPG_MSENS_INT_X94)
 		ret = IRQ_WAKE_THREAD;
 
 	return ret;
@@ -535,6 +560,7 @@ static int csky_hdmi_config_video_timing(struct csky_hdmi *hdmi,
 		 VSYNC_POLARITY_X30 : 0x0;
 	val |= mode->flags& DRM_MODE_FLAG_INTERLACE ?
 		 INETLACE_X30 : 0x0;
+    val = 0x01;
 	hdmi_writeb(hdmi, X30_EXT_VPARAMS, val);
 
 	/* Set detail external video timing */
@@ -575,8 +601,8 @@ static int csky_hdmi_phy_setup(struct csky_hdmi *hdmi)
 	unsigned int vid;
 	unsigned int color;
 
-	color = hdmi->hdmi_data.deep_color;
-	vid = hdmi->hdmi_data.vic;
+	color = DEEP_COLOR_8BIT;//hdmi->hdmi_data.deep_color;
+	vid = VID_04_1280X720P;//hdmi->hdmi_data.vic;
 	switch (vid & 0x7f) {
 	case VID_04_1280X720P:
 	case VID_19_1280X720P:
@@ -628,6 +654,14 @@ static int csky_hdmi_setup(struct csky_hdmi *hdmi,
 			   struct drm_display_mode *mode)
 {
 	unsigned int val;
+	unsigned int stat;
+
+	/* set to mode b */
+	stat = hdmi_readb(hdmi, X00_SYSTEM_CONTROL);
+	if (stat & PWR_MOD_A_X00) {
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
+		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
+	}
 
 	hdmi->hdmi_data.vic = drm_match_cea_mode(mode);
 	hdmi->hdmi_data.enc_in_format = HDMI_COLORSPACE_RGB;
@@ -669,7 +703,6 @@ static int csky_hdmi_setup(struct csky_hdmi *hdmi,
 	hdmi->tmds_rate = mode->clock * 1000;
 	csky_hdmi_i2c_init(hdmi);
 	csky_hdmi_phy_setup(hdmi);
-	csky_hdmi_tx_start(hdmi);
 
 	return 0;
 }
@@ -687,21 +720,22 @@ static void csky_hdmi_encoder_enable(struct drm_encoder *encoder)
 {
 	u8 stat;
 	struct csky_hdmi *hdmi = to_csky_hdmi(encoder);
-
+	csky_hdmi_tx_start(hdmi);
+#if 0
 	/* set to mode b */
 	stat = hdmi_readb(hdmi, X00_SYSTEM_CONTROL);
 	if (stat & PWR_MOD_A_X00) {
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RST_X00);
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MODB_RSTB_X00);
 	}
-
+#endif
 }
 
 static void csky_hdmi_encoder_disable(struct drm_encoder *encoder)
 {
 	u8 stat;
 	struct csky_hdmi *hdmi = to_csky_hdmi(encoder);
-
+#if 0
 	/* set to mode a */
 	stat = hdmi_readb(hdmi, X00_SYSTEM_CONTROL);
 	if (!(stat & PWR_MOD_A_X00)) {
@@ -710,6 +744,7 @@ static void csky_hdmi_encoder_disable(struct drm_encoder *encoder)
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_B_X00);
 		hdmi_writeb(hdmi, X00_SYSTEM_CONTROL, PWR_MOD_A_X00);
 	}
+#endif
 }
 
 static bool csky_hdmi_encoder_mode_fixup(struct drm_encoder *encoder,
@@ -820,6 +855,7 @@ static int csky_hdmi_bind(struct device *dev, struct device *master,
 		return ret;
 	drm_kms_helper_poll_init(hdmi->connector.dev);
 	dev_set_drvdata(dev, hdmi);
+
 	ret = devm_request_threaded_irq(dev, hdmi->irq, csky_hdmi_hard_irq,
 					csky_hdmi_hotplug_irq,
 					IRQF_SHARED, dev_name(dev),

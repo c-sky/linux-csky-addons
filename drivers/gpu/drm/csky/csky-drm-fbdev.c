@@ -23,17 +23,30 @@
 #include "csky-drm-drv.h"
 #include "csky-drm-fb.h"
 #include "csky-drm-fbdev.h"
+#include "csky-drm-gem.h"
 
 #define PREFERRED_BPP		32
 #define to_drm_private(x) \
 		container_of(x, struct csky_drm_private, fbdev_helper)
-
+#if 0
 static const struct drm_framebuffer_funcs csky_drm_fb_funcs = {
 	.destroy	= drm_framebuffer_cleanup,
 };
+#endif
+
+static int csky_fbdev_mmap(struct fb_info *info,
+			       struct vm_area_struct *vma)
+{
+	struct drm_fb_helper *helper = info->par;
+	struct csky_drm_private *private = to_drm_private(helper);
+
+	return csky_gem_mmap_buf(private->fbdev_bo, vma);
+}
+
 
 static struct fb_ops csky_drm_fbdev_ops = {
 	.owner		= THIS_MODULE,
+	.fb_mmap        = csky_fbdev_mmap,
 	.fb_fillrect	= drm_fb_helper_cfb_fillrect,
 	.fb_copyarea	= drm_fb_helper_cfb_copyarea,
 	.fb_imageblit	= drm_fb_helper_cfb_imageblit,
@@ -50,6 +63,7 @@ static int csky_drm_fbdev_create(struct drm_fb_helper *helper,
 	struct csky_drm_private *private = to_drm_private(helper);
 	struct drm_mode_fb_cmd2 mode_cmd = { 0 };
 	struct drm_device *dev = helper->dev;
+	struct csky_gem_object *ck_obj;
 	phys_addr_t map_phys;
 	struct drm_framebuffer *fb;
 	unsigned int bytes_per_pixel;
@@ -72,47 +86,38 @@ static int csky_drm_fbdev_create(struct drm_fb_helper *helper,
 
 	size = mode_cmd.pitches[0] * mode_cmd.height;
 
+	ck_obj = csky_gem_create_object(dev, size, true);
+	if (IS_ERR(ck_obj))
+		return -ENOMEM;
+
 	fbi = drm_fb_helper_alloc_fbi(helper);
 	if (IS_ERR(fbi)) {
 		dev_err(dev->dev, "Failed to create framebuffer info.\n");
 		return PTR_ERR(fbi);
 	}
 
-	drm_helper_mode_fill_fb_struct(helper->fb, &mode_cmd);
-	ret = drm_framebuffer_init(dev, helper->fb, &csky_drm_fb_funcs);
-	if (ret) {
-		dev_err(dev->dev, "Failed to initialize framebuffer: %d\n",
-			ret);
-		drm_framebuffer_cleanup(helper->fb);
-		return ret;
+	helper->fb = csky_drm_framebuffer_init(dev, &mode_cmd,
+						   private->fbdev_bo);
+	if (IS_ERR(helper->fb)) {
+		dev_err(dev->dev, "Failed to allocate DRM framebuffer.\n");
+		ret = PTR_ERR(helper->fb);
+		goto err_release_fbi;
 	}
 
 	fbi->par = helper;
 	fbi->flags = FBINFO_FLAG_DEFAULT;
 	helper->fbdev->fbops = &csky_drm_fbdev_ops;
 
-	unsigned map_size = PAGE_ALIGN(CSKY_FB_1080P_SIZE *
-				       (fbi->var.bits_per_pixel / 8));
-
-	fbi->screen_base = kmalloc(map_size, GFP_KERNEL);
-
-	if (fbi->screen_base == NULL) {
-		return -ENOMEM;
-	}
-
-	map_phys = virt_to_phys(fbi->screen_base);
-	memset(fbi->screen_base, 0, map_size);
-
-	dev->mode_config.fb_base = 0;
-	fbi->screen_size = map_size;
-	fbi->fix.smem_start = map_phys;
-	fbi->fix.smem_len = map_size;
-
 	drm_fb_helper_fill_fix(fbi, fb->pitches[0], fb->depth);
 	drm_fb_helper_fill_var(fbi, helper, sizes->fb_width, sizes->fb_height);
 
 	offset = fbi->var.xoffset * bytes_per_pixel;
 	offset += fbi->var.yoffset * fb->pitches[0];
+
+	dev->mode_config.fb_base = 0;
+	fbi->screen_size = ck_obj->base.size;
+	fbi->fix.smem_len = ck_obj->base.size;
+
 
 	DRM_DEBUG_KMS("FB [%dx%d]-%d kvaddr=%p offset=%ld size=%zu\n",
 		      fb->width, fb->height, fb->depth,fbi->fix.smem_start,
@@ -161,8 +166,7 @@ int csky_drm_fbdev_init(struct drm_device *dev)
 
 	ret = drm_fb_helper_initial_config(helper, PREFERRED_BPP);
 	if (ret < 0) {
-		dev_err(dev->dev, "Failed to set initial hw config - %d.\n",
-			ret);
+		dev_err(dev->dev, "Failed to set initial hw config - %d.\n", ret);
 		goto err_drm_fb_helper_fini;
 	}
 

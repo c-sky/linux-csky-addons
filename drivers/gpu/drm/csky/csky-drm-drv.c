@@ -29,6 +29,7 @@
 #include "csky-drm-drv.h"
 #include "csky-drm-fbdev.h"
 #include "csky-drm-fb.h"
+#include "csky-drm-gem.h"
 
 #define DRIVER_NAME	"csky-drm"
 #define DRIVER_DESC	"Csky Soc DRM"
@@ -103,7 +104,7 @@ static void csky_drm_lastclose(struct drm_device *dev)
 {
 	struct csky_drm_private *priv = dev->dev_private;
 
-	drm_fb_helper_restore_fbdev_mode_unlocked(&priv->fbdev_helper);
+	//drm_fb_helper_restore_fbdev_mode_unlocked(&priv->fbdev_helper);
 }
 
 static const struct file_operations csky_drm_driver_fops = {
@@ -111,7 +112,7 @@ static const struct file_operations csky_drm_driver_fops = {
 	.open = drm_open,
 	.poll = drm_poll,
 	.read = drm_read,
-	.mmap = drm_gem_cma_mmap,
+	.mmap = csky_gem_mmap,//drm_gem_cma_mmap,//csky_gem_mmap,
 	.unlocked_ioctl = drm_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = drm_compat_ioctl,
@@ -127,18 +128,18 @@ static struct drm_driver csky_drm_driver = {
 	.enable_vblank		= csky_drm_crtc_enable_vblank,
 	.disable_vblank 	= csky_drm_crtc_disable_vblank,
 	.gem_vm_ops		= &drm_gem_cma_vm_ops,
-	.gem_free_object_unlocked = drm_gem_cma_free_object,
-	.dumb_create		= drm_gem_cma_dumb_create,
-	.dumb_map_offset	= drm_gem_cma_dumb_map_offset,
+	.gem_free_object_unlocked = csky_gem_free_object,
+	.dumb_create		= csky_gem_dumb_create,//drm_gem_cma_dumb_create,//csky_gem_dumb_create,
+	.dumb_map_offset	= csky_gem_dumb_map_offset,//drm_gem_cma_dumb_map_offset,//csky_gem_dumb_map_offset,
 	.dumb_destroy		= drm_gem_dumb_destroy,
 	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
 	.gem_prime_import	= drm_gem_prime_import,
 	.gem_prime_export	= drm_gem_prime_export,
-	.gem_prime_import_sg_table = drm_gem_cma_prime_import_sg_table,
-	.gem_prime_vmap		= drm_gem_cma_prime_vmap,
-	.gem_prime_vunmap	= drm_gem_cma_prime_vunmap,
-	.gem_prime_mmap		= drm_gem_cma_prime_mmap,
+	.gem_prime_get_sg_table = csky_gem_prime_get_sg_table,
+	.gem_prime_vmap		= csky_gem_prime_vmap,
+	.gem_prime_vunmap = csky_gem_prime_vunmap,
+	.gem_prime_mmap		= csky_gem_mmap_buf,
 
 	.fops			= &csky_drm_driver_fops,
 	.name	= DRIVER_NAME,

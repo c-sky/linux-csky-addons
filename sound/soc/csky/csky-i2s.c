@@ -364,7 +364,7 @@ static int csky_i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 }
 
 /* apply to hdmi */
-#ifdef CONFIG_HDMI
+#ifdef CONFIG_CSKY_HDMI
 extern void csky_hdmi_audio_config(unsigned int sample_rate, unsigned int audio_fmt);
 #endif
 
@@ -377,7 +377,7 @@ static void csky_i2s_start_playback(struct csky_i2s *i2s)
 
 	csky_i2s_writel(i2s, IIS_AUDIOEN, AUDIOEN_IIS_EN);
 
-#ifdef CONFIG_HDMI
+#ifdef CONFIG_CSKY_HDMI
 	/* applay to hdmi audio */
 	if (i2s->config_hdmi == 1)
 		csky_hdmi_audio_config(i2s->sample_rate, i2s->audio_fmt);

@@ -17,8 +17,13 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_gem_cma_helper.h>
+
 #include "csky-drm-drv.h"
 #include "csky-drm-plane.h"
+#include "csky-drm-fb.h"
+#include "csky-drm-gem.h"
 
 /* If a modeset involves changing the setup of a plane, the atomic
  * infrastructure will call this to validate a proposed plane setup.
@@ -43,22 +48,42 @@ static int csky_plane_atomic_check(struct drm_plane *plane,
 }
 
 static void csky_plane_atomic_update(struct drm_plane *plane,
-				      struct drm_plane_state *state)
+				      struct drm_plane_state *old_state)
 {
 	struct csky_drm_private *private = plane->dev->dev_private;
-	struct csky_drm_crtc *csky_crtc = to_csky_crtc(plane->crtc);
+	struct csky_drm_crtc *csky_crtc = private->csky_crtc;
 	struct drm_fb_helper *helper;
 	struct fb_info *fbi;
-	//u32 pixel_format;
-
-	helper = &private->fbdev_helper;
-	//pixel_format = plane->crtc->primary->state->fb->pixel_format;
-	fbi = helper->fbdev;
+	struct drm_gem_object *obj;
+	struct csky_gem_object *ck_obj;
+	dma_addr_t scanout_start;
+	struct drm_plane_state *state = plane->state;
+	struct drm_framebuffer *fb = state->fb;
+	struct drm_gem_cma_object *cma_obj;
+	u32 width, height;
+	
+	width = csky_crtc->base.mode.hdisplay;
+	height = csky_crtc->base.mode.vdisplay;
 	printk("csky_plane_atomic_update\n");
-	/* set pbase */
-	//iowrite32(fbi->fix.smem_start, csky_crtc->regs + CSKY_LCD_PBASE);
-	/* set yuv base */
-	//iowrite32(fbi->fix.smem_start, csky_crtc->regs + CSKY_LCD_PBASE);
+	/*
+	 * can't update plane when vop is disabled.
+	 */
+	if (WARN_ON(!plane->crtc))
+		return;
+
+	if (WARN_ON(!csky_crtc->is_enabled))
+		return;
+
+	obj = csky_fb_get_gem_obj(fb, 0);
+    	if (obj) {
+    		ck_obj = to_csky_obj(obj);
+        	scanout_start = ck_obj->dma_addr;
+    		/* set pbase */
+    		iowrite32(scanout_start, csky_crtc->regs + CSKY_LCD_PBASE_Y);
+    		iowrite32(scanout_start + width * height, csky_crtc->regs + CSKY_LCD_PBASE_U);
+    		iowrite32(scanout_start + width * height + width * height / 4, csky_crtc->regs + CSKY_LCD_PBASE_V);
+    	}
+
 }
 
 static const struct drm_plane_helper_funcs csky_plane_helper_funcs = {
@@ -89,26 +114,24 @@ struct drm_plane *csky_plane_init(struct drm_device *dev,
 				 enum drm_plane_type type)
 {
 	struct drm_plane *plane;
-	struct csky_drm_plane *csky_plane;
-	const u32 *formats;
+	struct csky_drm_crtc *csky_crtc;
+ 	const u32 *formats;
 	u32 num_formats;
 	int ret = 0;
 
 	num_formats = ARRAY_SIZE(csky_primary_plane_formats);
 	formats = csky_primary_plane_formats;
-	csky_plane = devm_kzalloc(dev->dev, sizeof(struct csky_drm_plane),
+	plane = devm_kzalloc(dev->dev, sizeof(struct drm_plane),
 				 GFP_KERNEL);
-	if (!csky_plane) {
+	if (!plane) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	plane = &csky_plane->base;
 	ret = drm_universal_plane_init(dev, plane, 0xff,
 				       &csky_plane_funcs,
 				       formats, num_formats,
 				       type, NULL);
-
 	drm_plane_helper_add(plane, &csky_plane_helper_funcs);
 
 	return plane;

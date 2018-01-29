@@ -26,4 +26,7 @@ void csky_drm_framebuffer_fini(struct drm_framebuffer *fb);
 
 void csky_drm_mode_config_init(struct drm_device *dev);
 
+struct drm_gem_object *csky_fb_get_gem_obj(struct drm_framebuffer *fb,
+					       unsigned int plane);
+
 #endif /* _CSKY_DRM_FB_H */
