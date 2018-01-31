@@ -1,4 +1,6 @@
 
+menu "C-SKY Drivers"
 source "addons/drivers/Kconfig"
 source "addons/sound/soc/csky/Kconfig"
 source "addons/sound/soc/codecs/Kconfig"
+endmenu
