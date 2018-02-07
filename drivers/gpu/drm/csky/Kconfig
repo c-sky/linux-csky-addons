@@ -25,6 +25,11 @@ config CSKY_DRM
 	select DRM_FBDEV_EMULATION
 	help
 	  This enables the C-SKY DRM support.
+
+config CSKY_HDMI_NONE
+        bool "C-SKY HDMI NONE"
+        help
+          This disable all supports.
 endchoice
 
 config CSKY_DRM_HDMI
