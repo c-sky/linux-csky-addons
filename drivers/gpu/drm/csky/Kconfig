@@ -4,7 +4,7 @@
 
 choice
 	prompt "DRM default mode"
-	default CSKY_HDMI
+	default CSKY_HDMI_NONE
 	depends on OF
 	help
 	You can set here the default mode of DRM from
