@@ -27,6 +27,7 @@
 #include <linux/of_device.h>
 #include <linux/delay.h>
 #include <linux/crypto.h>
+#include <linux/version.h>
 #include <crypto/akcipher.h>
 #include <crypto/algapi.h>
 #include <crypto/internal/rsa.h>
@@ -1150,7 +1151,11 @@ static int csky_rsa_set_pub_key(struct crypto_akcipher *tfm, const void *key,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 0)
+static unsigned int csky_rsa_max_size(struct crypto_akcipher *tfm)
+#else
 static int csky_rsa_max_size(struct crypto_akcipher *tfm)
+#endif
 {
 	struct csky_rsa_ctx *ctx = akcipher_tfm_ctx(tfm);
 	struct rsa_key_obj *pkey = &ctx->base.key;
