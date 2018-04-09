@@ -11,3 +11,4 @@ obj-y	+= watchdog/
 obj-y	+= clk/csky/
 obj-y	+= pwm/
 obj-y	+= gpu/drm/csky/
+obj-y	+= pci/
