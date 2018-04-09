@@ -44,6 +44,10 @@
 static const struct of_device_id csky_i2s_match[];
 
 /*
+ *               -------
+ *    src_clk ---| div |--- mclk
+ *               -------
+ *
  * For csky,i2s-v1:
  *
  *              (left_j and i2s)
@@ -71,36 +75,52 @@ static int csky_i2s_calc_mclk_div(struct csky_i2s *i2s,
 	unsigned int mclk;
 	int div;
 	unsigned int mclk_fs_div;
+	unsigned int tmp;
 
-	if (i2s->params.has_mclk_sclk_div) {
-		if (word_size == 16)
-			mclk_fs_div = 256;
-		else if (word_size == 24)
-			mclk_fs_div = 384;
-		else
+	mclk = i2s->mclk;
+	if (mclk % rate) {
+		dev_err(i2s->dev, "error! mclk is not a multiple of fs\n");
+		return -EINVAL;
+	}
+
+	mclk_fs_div = mclk / rate;
+
+	if (i2s->params.has_mclk_sclk_div) { /* For csky,i2s-v1.1 */
+		if ((mclk_fs_div != 256) && (mclk_fs_div != 384) &&
+		    (mclk_fs_div != 512) && (mclk_fs_div != 768)) {
+			dev_err(i2s->dev, "error! invalid mclk_fs_div(%d)\n",
+				mclk_fs_div);
 			return -EINVAL;
+		}
 	} else { /* For csky,i2s-v1 */
-		if (i2s->sclk_fs_divider != 64) {
-			if (word_size == 16)
-				mclk_fs_div = 256;
-			else if (word_size == 24)
-				mclk_fs_div = 384;
-			else
+		if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
+		    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
+			if (mclk_fs_div != 8 * i2s->sclk_fs_divider) {
+				dev_err(i2s->dev, "error! mclk != 8*sclk\n");
 				return -EINVAL;
+			}
 		} else {
-			if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
-			    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J))
-				mclk_fs_div = 8 * 64; /* mclk=8*sclk=8*64fs */
-			else
-				mclk_fs_div = 4 * 64; /* mclk=4*sclk=4*64fs */
+			if (mclk_fs_div != 4 * i2s->sclk_fs_divider) {
+				dev_err(i2s->dev, "error! mclk != 4*sclk\n");
+				return -EINVAL;
+			}
 		}
 	}
 
 	i2s->mclk_fs_divider = mclk_fs_div;
-	mclk = mclk_fs_div * rate;
 
 	/* div = src_clk/(2*mclk) - 1; */
 	div = i2s->src_clk / 2 / mclk - 1;
+	if (div >= 0) {
+		tmp = i2s->src_clk / (2 * (div + 1));
+		if (tmp != mclk) {
+			dev_err(i2s->dev,
+				"error! mclk mismatch! Expected %d, got %d\n",
+				mclk, tmp);
+			return -EINVAL;
+		}
+	}
+
 	return div;
 }
 
@@ -117,35 +137,8 @@ static int csky_i2s_calc_fs_div(struct csky_i2s *i2s, unsigned int word_size)
 	unsigned int multi; /* sclk = multi * fs */
 	int div;
 
-	if (i2s->sclk_fs_divider != 64) {
-		if (i2s->params.has_mclk_sclk_div) {
-			if (word_size == 16)
-				multi = 32; /* sclk=32fs */
-			else if (word_size == 24)
-				multi = 48; /* sclk=48fs */
-			else
-				return -EINVAL;
-		} else { /* For csky,i2s-v1 */
-			if ((i2s->audio_fmt == SND_SOC_DAIFMT_I2S) ||
-			    (i2s->audio_fmt == SND_SOC_DAIFMT_LEFT_J)) {
-				if (word_size == 16)
-					multi = 32; /* sclk=32fs */
-				else if (word_size == 24)
-					multi = 48; /* sclk=48fs */
-				else
-					return -EINVAL;
-			} else { /* RIGHT_J */
-				if (word_size == 16)
-					multi = 64; /* sclk=64fs */
-				else if (word_size == 24)
-					multi = 96; /* sclk=96fs */
-				else
-					return -EINVAL;
-			}
-		}
-	} else {
-		multi = 64; /* sclk=64fs */
-	}
+	/* To support all the word sizes(16,24,32), fix sclk to 64fs */
+	multi = 64;
 
 	i2s->sclk_fs_divider = multi;
 
@@ -304,6 +297,15 @@ static int csky_i2s_hw_params(struct snd_pcm_substream *substream,
 				     params_width(params));
 }
 
+static int csky_i2s_set_dai_sysclk(struct snd_soc_dai *dai,
+				   int clk_id, unsigned int freq, int dir)
+{
+	struct csky_i2s *i2s = snd_soc_dai_get_drvdata(dai);
+
+	i2s->mclk = freq;
+	return 0;
+}
+
 static int csky_i2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	struct csky_i2s *i2s = snd_soc_dai_get_drvdata(dai);
@@ -437,6 +439,7 @@ static void csky_i2s_shutdown(struct snd_pcm_substream *substream,
 static const struct snd_soc_dai_ops csky_i2s_dai_ops = {
 	.set_fmt	= csky_i2s_set_fmt,
 	.hw_params	= csky_i2s_hw_params,
+	.set_sysclk	= csky_i2s_set_dai_sysclk,
 	.trigger	= csky_i2s_trigger,
 	.startup	= csky_i2s_startup,
 	.shutdown	= csky_i2s_shutdown,

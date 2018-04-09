@@ -5,3 +5,11 @@ config SND_CSKY_DUMMY_CODEC
 	help
 	  This is a dummy codec.
 
+config SND_SOC_TLV320AIC32X4_CSKY
+	tristate
+	default n
+
+config SND_SOC_TLV320AIC32X4_I2C_CSKY
+	tristate "TLV320AIC32X4 audio CODECs - I2C"
+	default n
+	select SND_SOC_TLV320AIC32X4_CSKY
