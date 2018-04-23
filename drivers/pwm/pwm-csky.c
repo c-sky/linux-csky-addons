@@ -83,17 +83,16 @@ static int csky_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 		int duty_ns, int period_ns)
 {
 	struct csky_pwm_chip *pc = to_csky_pwm_chip(chip);
-	u64 val, div, clk_rate;
-	unsigned long prescale = PWM_MIN_PRESCALE, pv, dc;
+	u64 val,val_2, div, clk_rate, max_ns;
+	s64 clk_temp;
+	unsigned long prescale = PWM_MIN_PRESCALE, pv, dc, temp;
 	int ret;
 
-	if (pc->period == 0 || pc->duty == 0) {
-		if (duty_ns != 0)
-			pc->duty = duty_ns;
+	if (pc->period == 0) {
 		if (period_ns != 0)
 			pc->period = period_ns;
-		if (pc->duty == 0 || pc->period == 0) {
-			return 0;
+		if (pc->period == 0) {
+			return -EINVAL;
 		}
 	}
 	/*
@@ -106,7 +105,17 @@ static int csky_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * PV = (PWM_CLK_RATE * period_ns) / (10^9 * (PRESCALE + 1))
 	 * DC = (PWM_CLK_RATE * duty_ns) / (10^9 * (PRESCALE + 1))
 	 */
+	/* if period_ns > max_ns, div the clk_rate */
 	clk_rate = clk_get_rate(pc->clk);
+	max_ns = div64_u64(((u64)1000000000) * PWM_MAX_PERIOD, clk_rate);
+
+	if (period_ns > max_ns) {
+		/* 128 is the max division */
+		clk_rate = div64_u64(clk_rate, (u64)128);
+		temp = readl_relaxed(pc->base + PWMCFG);
+		temp |= 0xf << 24;
+		writel_relaxed(temp, pc->base + PWMCFG);
+	}
 	while (1) {
 		div = 1000000000;
 		div *= 1 + prescale;
@@ -116,8 +125,11 @@ static int csky_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 		dc = div64_u64(val, div);
 
 		/* if duty_ns and period_ns are not achievable then return */
-		if (pv < PWM_MIN_PERIOD || dc < PWM_MIN_DUTY)
+		if (pv < PWM_MIN_PERIOD)
 			return -EINVAL;
+
+		if (dc < PWM_MIN_DUTY)
+			dc = PWM_MIN_DUTY;
 
 		/*
 		 * if pv and dc have crossed their upper limit, then increase
@@ -130,6 +142,26 @@ static int csky_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 		}
 		break;
 	}
+
+	/* check the pv , to get the best choice */
+	if (pv < PWM_MAX_PERIOD) {
+		val = pv * (u64)1000000000;
+		val = div64_u64(val, (u64)period_ns);
+		clk_temp = clk_rate - val;
+		val =  (clk_temp) > 0 ? (clk_rate - val) : (val - clk_rate);
+
+		val_2 = (pv + 1) * (u64)1000000000;
+		val_2 = div64_u64(val_2, (u64)period_ns);
+		clk_temp = clk_rate - val_2;
+		val_2 = (clk_temp) > 0 ? (clk_rate - val_2) : (val_2 - clk_rate);
+
+		if (val > val_2) {
+			pv += 1;
+		}
+	}
+	/* the csky pwm modular will plus 1 */
+	if (pv > PWM_MIN_PERIOD)
+		pv -= 1;
 
 	ret = clk_enable(pc->clk);
 	if (ret)
