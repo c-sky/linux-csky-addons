@@ -19,6 +19,9 @@ config CSKY_CRYPTO_TDES
 config CSKY_CRYPTO_CRC
     bool "Support CRC Engine Driver"
 
+config CSKY_CRYPTO_CRC_V2
+    bool "Support CRC Engine Driver version2"
+
 config CSKY_CRYPTO_RSA
     bool "Support RSA Engine Driver"
 

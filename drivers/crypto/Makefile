@@ -12,6 +12,10 @@ ifeq ($(CONFIG_CSKY_CRYPTO_CRC), y)
 csky-cipher-objs += csky_crc.o
 endif
 
+ifeq ($(CONFIG_CSKY_CRYPTO_CRC_V2), y)
+csky-cipher-objs += csky_crc_v2.o
+endif
+
 ifeq ($(CONFIG_CSKY_CRYPTO_RSA), y)
 csky-cipher-objs += csky_rsa.o
 endif
