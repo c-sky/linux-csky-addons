@@ -62,7 +62,7 @@ struct csky_crypto_crc {
 	u8				busy;
 };
 
-static struct csky_crypto_crc_list {
+struct csky_crypto_crc_list {
 	struct list_head dev_list;
 	spinlock_t	 lock;
 };
@@ -76,6 +76,7 @@ struct csky_crypto_crc_reqctx {
 	struct csky_crypto_crc *crc;
 
 	u32	total;
+	u32	data;
 	size_t	bufnext_len;
 	u8	bufnext[CHKSUM_DIGEST_SIZE];
 	u8	flag;
@@ -208,7 +209,11 @@ static int csky_crypto_crc_handle(struct csky_crypto_crc *crc)
 		return -EINVAL;
 	}
 
-	put_unaligned_le32(readl(&crc->regs->data), req->result);
+	if (ctx->flag != CRC_CRYPTO_STATE_UPDATE){
+		put_unaligned_le32(readl(&crc->regs->data), req->result);
+	} else {
+		ctx->data = readl(&crc->regs->data);
+	}
 
 	crc->busy = 0;
 	if (req->base.complete)
@@ -292,6 +297,7 @@ static int csky_crypto_crc_final(struct ahash_request *req)
 
 	dev_dbg(ctx->crc->dev, "crc_final\n");
 	ctx->flag = CRC_CRYPTO_STATE_FINISH;
+	put_unaligned_le32(ctx->data, req->result);
 
 	return csky_crypto_crc_handle_queue(ctx->crc, req);
 }
