@@ -52,14 +52,6 @@
 #define GPIO_EXT_PORT		0x50
 #define GPIO_LS_SYNC		0x60
 
-/* GPIO irq numbers */
-#define GPIO0_IRQS 0
-#define GPIO1_IRQS 1
-#define GPIO2_IRQS 2
-#define GPIO3_IRQS 3
-
-
-
 enum csky_pinctrl_type {
 	ERAGON,
 };
@@ -1043,24 +1035,6 @@ static int csky_interrupts_register(struct platform_device *pdev,
 						     bank->nr_pins,
 						     &irq_generic_chip_ops,
 						     NULL);
-		switch (i) {
-		case 0:
-			bank->irq = GPIO0_IRQS;
-			break;
-		case 1:
-			bank->irq = GPIO1_IRQS;
-			break;
-		case 2:
-			bank->irq = GPIO2_IRQS;
-			break;
-		case 3:
-			bank->irq = GPIO3_IRQS;
-			break;
-		default:
-			dev_err(&pdev->dev,
-				"The GPIO irqs is wrong !\n");
-			return -1;
-		}
 		if (!bank->domain) {
 			dev_warn(&pdev->dev,
 				 "could not init irq domain for bank %s\n",
@@ -1197,6 +1171,11 @@ static int csky_get_bank_data(struct csky_pin_bank *bank,
 	if (IS_ERR(bank->reg_base))
 		return PTR_ERR(bank->reg_base);
 
+	bank->irq = irq_of_parse_and_map(bank->of_node, 0);
+	if (!bank->irq) {
+		dev_err(info->dev, "cannot get correct virq for bank\n");
+		return -ENOENT;
+	}
 	return 0;
 }
 
