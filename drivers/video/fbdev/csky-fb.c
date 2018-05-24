@@ -469,7 +469,7 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 	struct csky_fb_info *info = dev_id;
 	unsigned long status;
 
-	raw_spin_lock(&info->slock);
+	spin_lock(&info->slock);
 
 	status = readl(info->iobase + CSKY_LCD_INT_STAT);
 	/* clear interrupts */
@@ -482,7 +482,7 @@ static irqreturn_t csky_fb_irq(int irq, void *dev_id)
 		csky_fb_disable_irq(info, CSKY_LCDINT_MASK_BAU);
 	}
 
-	raw_spin_unlock(&info->slock);
+	spin_unlock(&info->slock);
 	return IRQ_HANDLED;
 }
 
