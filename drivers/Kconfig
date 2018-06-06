@@ -10,6 +10,7 @@ source "addons/drivers/watchdog/Kconfig"
 source "addons/drivers/clk/csky/Kconfig"
 source "addons/drivers/pwm/Kconfig"
 source "addons/drivers/gpu/drm/csky/Kconfig"
+source "addons/drivers/npu/vip8000/Kconfig"
 source "addons/drivers/pci/Kconfig"
 endmenu
 

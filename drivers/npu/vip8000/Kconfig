@@ -1,0 +1,9 @@
+#
+# C-SKY NPU  driver configuration
+#
+
+config CSKY_NPU
+	tristate "C-SKY NPU support"
+	default n
+	help
+	  This enables the C-SKY NPU support.
