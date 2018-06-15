@@ -53,8 +53,8 @@
 *****************************************************************************/
 
 
-#include <gc_hal.h>
-#include <gc_hal_base.h>
+#include "gc_hal.h"
+#include "gc_hal_base.h"
 
 #if gcdANDROID_NATIVE_FENCE_SYNC
 

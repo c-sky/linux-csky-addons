@@ -14,17 +14,12 @@ EXTRA_CFLAGS += -DgcdENABLE_3D=1
 EXTRA_CFLAGS += -DgcdNONPAGED_MEMORY_BUFFERABLE=1
 EXTRA_CFLAGS += -DgcdFPGA_BUILD=1
 EXTRA_CFLAGS += -DgcdENABLE_TRUST_APPLICATION=1
+EXTRA_CFLAGS += -DENABLE_GPU_CLOCK_BY_DRIVER=0
+EXTRA_CFLAGS += -DgcdENABLE_DRM=0
+EXTRA_CFLAGS += -DgcdCACHE_FUNCTION_UNIMPLEMENTED=0
 
-obj-$(CONFIG_DMA_SHARED_BUFFER) += gc_hal_kernel_allocator_dmabuf.o
-obj-$(CONFIG_IOMMU_SUPPORT) += gc_hal_kernel_iommu.o
-obj-$(CONFIG_DRM) += gc_hal_kernel_drm.o
-obj-$(CONFIG_SYNC_FILE) += gc_hal_kernel_sync.o
-ifeq ($(CONFIG_CSKY_NPU),m)
+ifneq ($(CONFIG_CSKY_NPU), )
 obj-m += vip8000_galcore.o
-else ifeq ($(CONFIG_CSKY_NPU),y)
-obj-m += vip8000_galcore.o
-endif
-#obj-$(CONFIG_CSKY_NPU) += vip8000_galcore.o
 vip8000_galcore-y := gc_hal_kernel_device.o \
 		     gc_hal_kernel_linux.o \
 		     gc_hal_kernel_math.o \
@@ -56,3 +51,8 @@ vip8000_galcore-y := gc_hal_kernel_device.o \
 		     gc_hal_ta_mmu.o \
 		     gc_hal_ta_emulator.o \
 		     gc_hal_kernel_recorder.o
+vip8000_galcore-$(CONFIG_DMA_SHARED_BUFFER) += gc_hal_kernel_allocator_dmabuf.o
+vip8000_galcore-$(CONFIG_IOMMU_SUPPORT) += gc_hal_kernel_iommu.o
+vip8000_galcore-$(CONFIG_SYNC_FILE) += gc_hal_kernel_sync.o
+vip8000_galcore-$(CONFIG_DRM) += gc_hal_kernel_drm.o
+endif

@@ -2744,10 +2744,17 @@ static struct dma_buf_ops _dmabuf_ops =
     .unmap_dma_buf = _dmabuf_unmap,
     .mmap = _dmabuf_mmap,
     .release = _dmabuf_release,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
     .kmap_atomic = _dmabuf_kmap,
     .kunmap_atomic = _dmabuf_kunmap,
     .kmap = _dmabuf_kmap,
     .kunmap = _dmabuf_kunmap,
+#else
+    .map_atomic = _dmabuf_kmap,
+    .unmap_atomic = _dmabuf_kunmap,
+    .map = _dmabuf_kmap,
+    .unmap = _dmabuf_kunmap,
+#endif
 };
 #endif
 
