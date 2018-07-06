@@ -18,7 +18,7 @@ EXTRA_CFLAGS += -DENABLE_GPU_CLOCK_BY_DRIVER=0
 EXTRA_CFLAGS += -DgcdENABLE_DRM=0
 EXTRA_CFLAGS += -DgcdCACHE_FUNCTION_UNIMPLEMENTED=0
 
-ifneq ($(CONFIG_CSKY_NPU), )
+ifneq ($(CONFIG_CSKY_NPU),)
 obj-m += vip8000_galcore.o
 vip8000_galcore-y := gc_hal_kernel_device.o \
 		     gc_hal_kernel_linux.o \
@@ -55,4 +55,6 @@ vip8000_galcore-$(CONFIG_DMA_SHARED_BUFFER) += gc_hal_kernel_allocator_dmabuf.o
 vip8000_galcore-$(CONFIG_IOMMU_SUPPORT) += gc_hal_kernel_iommu.o
 vip8000_galcore-$(CONFIG_SYNC_FILE) += gc_hal_kernel_sync.o
 vip8000_galcore-$(CONFIG_DRM) += gc_hal_kernel_drm.o
+else
+obj-$(CONFIG_CSKY_NPU) += vip8000_galcore.o
 endif
