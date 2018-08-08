@@ -771,12 +771,20 @@ static void csky_gpio_set(struct gpio_chip *gc, unsigned offset, int value)
 static int csky_gpio_get(struct gpio_chip *gc, unsigned offset)
 {
 	struct csky_pin_bank *bank = gpiochip_get_data(gc);
-	u32 data;
+	u32 datai, dir;
 
-	data = readl(bank->reg_base + GPIO_EXT_PORT);
-	data >>= offset;
-	data &= 1;
-	return data;
+	dir = csky_gpio_get_direction(gc, offset);
+	if (!dir) {
+		/* This is output mode */
+		data = readl(bank->reg_base + GPIO_SWPORT_DR);
+		data &= BIT(offset);
+	} else {
+		/* This is input mode */
+		data = readl(bank->reg_base + GPIO_EXT_PORT);
+		data >>= offset;
+		data &= 1;
+	}
+	return data? 1 : 0;
 }
 
 /*
