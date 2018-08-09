@@ -771,7 +771,7 @@ static void csky_gpio_set(struct gpio_chip *gc, unsigned offset, int value)
 static int csky_gpio_get(struct gpio_chip *gc, unsigned offset)
 {
 	struct csky_pin_bank *bank = gpiochip_get_data(gc);
-	u32 datai, dir;
+	u32 data, dir;
 
 	dir = csky_gpio_get_direction(gc, offset);
 	if (!dir) {
