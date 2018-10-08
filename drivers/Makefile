@@ -13,3 +13,4 @@ obj-y	+= pwm/
 obj-y	+= gpu/drm/csky/
 obj-y	+= npu/vip8000/
 obj-y	+= pci/
+obj-y	+= irqchip/

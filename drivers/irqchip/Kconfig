@@ -1,0 +1,6 @@
+
+config DW_APB_ICTL_DH
+	bool "DH Interrupt Controller"
+	select GENERIC_IRQ_CHIP
+	select IRQ_DOMAIN
+	default n

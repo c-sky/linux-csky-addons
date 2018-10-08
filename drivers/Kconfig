@@ -12,5 +12,6 @@ source "addons/drivers/pwm/Kconfig"
 source "addons/drivers/gpu/drm/csky/Kconfig"
 source "addons/drivers/npu/vip8000/Kconfig"
 source "addons/drivers/pci/Kconfig"
+source "addons/drivers/irqchip/Kconfig"
 endmenu
 
