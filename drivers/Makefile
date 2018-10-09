@@ -8,6 +8,7 @@ obj-y	+= reset/
 obj-y	+= mailbox/
 obj-y	+= crypto/
 obj-y	+= watchdog/
+obj-y	+= virblk/
 obj-y	+= clk/csky/
 obj-y	+= pwm/
 obj-y	+= gpu/drm/csky/

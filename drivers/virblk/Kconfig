@@ -1,0 +1,10 @@
+#
+# C-SKY Virtual block  driver configuration
+#
+
+config CSKY_VIRBLK
+	bool "C-SKY Virtual Block Device Driver"
+	default n
+	help
+	  This enables C-SKY virtual block device driver for C-SKY.
+
